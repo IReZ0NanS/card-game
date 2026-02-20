@@ -34,7 +34,11 @@ import {
   ShoppingCart,
   Link,
   ScrollText,
-  Bug
+  Bug,
+  Camera,
+  Star,
+  GripHorizontal,
+  Hexagon
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
@@ -223,11 +227,34 @@ const getCardStyle = (rName, raritiesList) => {
 
 const SELL_PRICE = 15;
 
+// Компонент-помічник для Аватарок
+function PlayerAvatar({ profile, className = "", iconSize = 24 }) {
+    if (profile?.avatarUrl) {
+        return (
+            <div className={`overflow-hidden bg-neutral-800 ${className} flex items-center justify-center border-2 border-neutral-700 shadow-md relative shrink-0`}>
+                <img src={profile.avatarUrl} alt="avatar" className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+                {profile.isSuperAdmin && <Crown size={14} className="absolute top-0 right-0 text-red-500 bg-neutral-900 rounded-full" title="Супер Адмін" />}
+            </div>
+        );
+    }
+    
+    // Дефолтна логіка якщо немає аватарки
+    const bgClass = profile?.isSuperAdmin ? "bg-red-900 border-red-500 text-red-200" :
+                    profile?.isAdmin ? "bg-purple-900 border-purple-500 text-purple-200" : "bg-neutral-800 border-neutral-700 text-yellow-500";
+    
+    return (
+        <div className={`flex items-center justify-center font-bold border-2 shadow-sm shrink-0 ${bgClass} ${className}`}>
+            {profile?.isSuperAdmin ? <Crown size={iconSize} /> : profile?.isAdmin ? <Shield size={iconSize} /> : profile?.nickname?.charAt(0).toUpperCase()}
+        </div>
+    );
+}
+
 export default function App() {
   const [user, setUser] = useState(undefined);
   const [profile, setProfile] = useState(null);
   const [dbInventory, setDbInventory] = useState([]);
   const [marketListings, setMarketListings] = useState([]);
+  const [showcases, setShowcases] = useState([]); 
   const [loading, setLoading] = useState(true);
   
   // ЗАХИСТ ВІД ШВИДКИХ КЛІКІВ (Race Conditions)
@@ -258,6 +285,10 @@ export default function App() {
   const [listingCard, setListingCard] = useState(null);
 
   const canClaimDaily = profile && !isToday(profile.lastDailyClaim);
+
+  useEffect(() => {
+    document.title = "Card Game";
+  }, []);
 
   // --- ЛОГУВАННЯ СИСТЕМИ ---
   const addSystemLog = async (type, details) => {
@@ -368,11 +399,19 @@ export default function App() {
       setMarketListings(listings.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)));
     });
 
+    const showcasesRef = collection(db, "artifacts", GAME_ID, "users", user.uid, "showcases");
+    const unsubShowcases = onSnapshot(showcasesRef, (snapshot) => {
+        const list = [];
+        snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+        setShowcases(list);
+    });
+
     return () => {
       unsubSettings();
       unsubProfile();
       unsubInv();
       unsubMarket();
+      unsubShowcases();
     };
   }, [user]);
 
@@ -419,6 +458,8 @@ export default function App() {
           isAdmin: false,
           isSuperAdmin: false,
           isBanned: false,
+          avatarUrl: "",
+          mainShowcaseId: null
         });
       } else {
         await signInWithEmailAndPassword(auth, email, password);
@@ -462,6 +503,8 @@ export default function App() {
           isAdmin: false,
           isSuperAdmin: false,
           isBanned: false,
+          avatarUrl: googleUser.photoURL || "",
+          mainShowcaseId: null
         });
       }
     } catch (err) {
@@ -477,6 +520,7 @@ export default function App() {
     await signOut(auth);
     setProfile(null);
     setDbInventory([]);
+    setShowcases([]);
     setCurrentView("shop");
     setAuthMode("login");
   };
@@ -617,7 +661,7 @@ export default function App() {
       let results = [];
       let countsMap = {};
       let needsCatalogUpdate = false; 
-      let totalEarnedCoins = 0; // Для статистики
+      let totalEarnedCoins = 0; 
       const availablePackCards = tempCatalog.filter((c) => c.packId === packId);
 
       for (let i = 0; i < amountToOpen; i++) {
@@ -801,11 +845,17 @@ export default function App() {
     }
   };
 
-  const sellEveryDuplicate = async () => {
+  const sellEveryDuplicate = async (specificInventory = null) => {
     if (isProcessing) return;
-    const duplicates = dbInventory.filter(item => item.amount > 1);
+    
+    const baseList = specificInventory || dbInventory.map(item => {
+        const cardData = cardsCatalog.find((c) => c.id === item.id);
+        return cardData ? { card: cardData, amount: item.amount } : null;
+    }).filter(Boolean);
+
+    const duplicates = baseList.filter(item => item.amount > 1);
     if (duplicates.length === 0) {
-      return showToast("У вас немає дублікатів для продажу!", "error");
+      return showToast("У вибраному списку немає дублікатів для продажу!", "error");
     }
 
     setIsProcessing(true);
@@ -814,14 +864,15 @@ export default function App() {
     const batch = writeBatch(db);
 
     duplicates.forEach(item => {
-      const cardDef = cardsCatalog.find(c => c.id === item.id);
+      const idToUpdate = item.card?.id || item.id;
+      const cardDef = cardsCatalog.find(c => c.id === idToUpdate);
       const cardPrice = cardDef?.sellPrice ? Number(cardDef.sellPrice) : SELL_PRICE;
       const sellCount = item.amount - 1;
 
       totalEarned += sellCount * cardPrice;
       totalCardsRemoved += sellCount;
 
-      const invDocRef = doc(db, "artifacts", GAME_ID, "users", user.uid, "inventory", item.id);
+      const invDocRef = doc(db, "artifacts", GAME_ID, "users", user.uid, "inventory", idToUpdate);
       batch.update(invDocRef, { amount: 1 });
     });
 
@@ -840,6 +891,65 @@ export default function App() {
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  // --- ЛОГІКА ВІТРИН ---
+  const createShowcase = async (name) => {
+      if (!name.trim()) return showToast("Введіть назву вітрини!");
+      if (showcases.length >= 5 && !profile.isSuperAdmin) return showToast("Досягнуто ліміт вітрин (5 шт).");
+      
+      try {
+          const newRef = doc(collection(db, "artifacts", GAME_ID, "users", user.uid, "showcases"));
+          await setDoc(newRef, {
+              name: name.trim(),
+              cardIds: [],
+              createdAt: new Date().toISOString()
+          });
+          showToast("Вітрину успішно створено!", "success");
+      } catch (e) {
+          console.error(e);
+          showToast("Помилка створення вітрини.");
+      }
+  };
+
+  const deleteShowcase = async (showcaseId) => {
+      if (!confirm("Видалити цю вітрину? Картки залишаться у вашому інвентарі.")) return;
+      try {
+          const batch = writeBatch(db);
+          batch.delete(doc(db, "artifacts", GAME_ID, "users", user.uid, "showcases", showcaseId));
+          
+          if (profile.mainShowcaseId === showcaseId) {
+              batch.update(doc(db, "artifacts", GAME_ID, "public", "data", "profiles", user.uid), { mainShowcaseId: null });
+          }
+          await batch.commit();
+          showToast("Вітрину видалено.", "success");
+      } catch (e) {
+          console.error(e);
+          showToast("Помилка видалення.");
+      }
+  };
+
+  const setMainShowcase = async (showcaseId) => {
+      try {
+          await updateDoc(doc(db, "artifacts", GAME_ID, "public", "data", "profiles", user.uid), {
+              mainShowcaseId: showcaseId
+          });
+          showToast("Головну вітрину оновлено!", "success");
+      } catch (e) {
+          console.error(e);
+          showToast("Помилка оновлення профілю.");
+      }
+  };
+
+  const saveShowcaseCards = async (showcaseId, newCardIds) => {
+      try {
+          await updateDoc(doc(db, "artifacts", GAME_ID, "users", user.uid, "showcases", showcaseId), {
+              cardIds: newCardIds
+          });
+      } catch (e) {
+          console.error(e);
+          showToast("Помилка збереження карток у вітрині.");
+      }
   };
 
   const fullInventory = dbInventory
@@ -1002,41 +1112,46 @@ export default function App() {
       
       <header className="bg-neutral-900 border-b border-neutral-800 sticky top-0 z-50 shadow-sm">
         <div className="max-w-5xl mx-auto px-4 py-3 flex justify-between items-center">
-          <button
-            onClick={() => setCurrentView("profile")}
-            className="flex items-center gap-3 hover:bg-neutral-800 p-1.5 pr-3 rounded-full transition-colors border border-transparent hover:border-neutral-700"
-          >
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold border shadow-sm ${
-                profile?.isSuperAdmin ? "bg-red-900 border-red-500 text-red-200" :
-                profile?.isAdmin ? "bg-purple-900 border-purple-500 text-purple-200" : "bg-neutral-800 border-neutral-700 text-yellow-500"
-              }`}
-            >
-              {profile?.isSuperAdmin ? <Crown size={20} /> : profile?.isAdmin ? <Shield size={20} /> : profile?.nickname?.charAt(0).toUpperCase()}
-            </div>
-            <div className="hidden sm:block text-left">
-              <div className="font-bold text-sm leading-tight text-white">{profile?.nickname}</div>
-              <div className="text-xs text-neutral-400 leading-tight">Профіль</div>
-            </div>
-          </button>
-
-          <div className="flex items-center gap-2 sm:gap-4">
-             {canClaimDaily && (
-                <button 
-                   onClick={() => setCurrentView("profile")} 
-                   className="relative bg-orange-500/20 text-orange-400 p-2.5 rounded-xl border border-orange-500/30 hover:bg-orange-500/30 transition-colors flex items-center justify-center group" 
-                   title="Забрати щоденний бонус!"
-                >
-                   <Gift size={20} className="animate-pulse group-hover:animate-none" />
-                   <span className="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5">
-                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
-                       <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-orange-500"></span>
-                   </span>
-                </button>
-             )}
-             <div className="bg-neutral-950 px-5 py-2.5 rounded-xl border border-neutral-800 shadow-inner flex gap-2 items-center">
-               <Coins size={20} className="text-yellow-500" />
-               <span className="text-yellow-500 font-black text-lg">{profile?.coins}</span>
+          
+          {/* Логотип Бренду */}
+          <div className="flex items-center gap-2 sm:gap-3 text-white font-black text-lg tracking-wider cursor-pointer group" onClick={() => setCurrentView("shop")}>
+             <div className="bg-gradient-to-br from-purple-600 to-blue-600 p-1.5 sm:p-2 rounded-xl shadow-[0_0_15px_rgba(147,51,234,0.4)] group-hover:scale-105 transition-transform">
+                <Hexagon className="text-white w-5 h-5 sm:w-6 sm:h-6 fill-white/20" />
              </div>
+             <span className="hidden sm:block bg-clip-text text-transparent bg-gradient-to-r from-white to-neutral-400 group-hover:to-white transition-colors">Card Game</span>
+          </div>
+
+          <div className="flex items-center gap-3 sm:gap-6">
+            <button
+              onClick={() => setCurrentView("profile")}
+              className="flex items-center gap-3 hover:bg-neutral-800 p-1.5 pr-3 rounded-full transition-colors border border-transparent hover:border-neutral-700 text-left"
+            >
+              <PlayerAvatar profile={profile} className="w-10 h-10 rounded-full" iconSize={20} />
+              <div className="hidden md:block text-left">
+                <div className="font-bold text-sm leading-tight text-white">{profile?.nickname}</div>
+                <div className="text-xs text-neutral-400 leading-tight">Профіль</div>
+              </div>
+            </button>
+
+            <div className="flex items-center gap-2 sm:gap-4">
+               {canClaimDaily && (
+                  <button 
+                     onClick={() => setCurrentView("profile")} 
+                     className="relative bg-orange-500/20 text-orange-400 p-2.5 rounded-xl border border-orange-500/30 hover:bg-orange-500/30 transition-colors flex items-center justify-center group" 
+                     title="Забрати щоденний бонус!"
+                  >
+                     <Gift size={20} className="animate-pulse group-hover:animate-none" />
+                     <span className="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5">
+                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                         <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-orange-500"></span>
+                     </span>
+                  </button>
+               )}
+               <div className="bg-neutral-950 px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl border border-neutral-800 shadow-inner flex gap-2 items-center">
+                 <Coins size={18} className="text-yellow-500" />
+                 <span className="text-yellow-500 font-black text-base sm:text-lg">{profile?.coins}</span>
+               </div>
+            </div>
           </div>
         </div>
       </header>
@@ -1082,6 +1197,13 @@ export default function App() {
             setViewingCard={setViewingCard}
             setListingCard={setListingCard}
             packsCatalog={packsCatalog}
+            showcases={showcases}
+            createShowcase={createShowcase}
+            deleteShowcase={deleteShowcase}
+            setMainShowcase={setMainShowcase}
+            saveShowcaseCards={saveShowcaseCards}
+            profile={profile}
+            cardsCatalog={cardsCatalog}
           />
         )}
         {currentView === "market" && (
@@ -1109,6 +1231,9 @@ export default function App() {
             marketListings={marketListings}
             cardsCatalog={cardsCatalog}
             rarities={rarities}
+            showcases={showcases}
+            fullInventory={fullInventory}
+            setViewingCard={setViewingCard}
           />
         )}
         {currentView === "rating" && (
@@ -1382,8 +1507,13 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
             const style = getCardStyle(card.rarity, rarities);
             const effectClass = card.effect ? `effect-${card.effect}` : '';
             return (
-              <div key={index} className="flex flex-col items-center animate-in zoom-in slide-in-from-bottom-6" style={{ animationDelay: `${Math.min(index * 50, 2000)}ms`, fillMode: 'both' }}>
-                <div className={`w-32 sm:w-40 md:w-56 aspect-[2/3] rounded-2xl border-4 overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.6)] transform transition-all hover:scale-105 hover:rotate-2 ${style.border} bg-neutral-900 relative mb-4 ${effectClass}`}>
+              <div 
+                key={index} 
+                onClick={() => setViewingCard({ card, amount: 1 })}
+                className="flex flex-col items-center animate-in zoom-in slide-in-from-bottom-6 cursor-pointer group" 
+                style={{ animationDelay: `${Math.min(index * 50, 2000)}ms`, fillMode: 'both' }}
+              >
+                <div className={`w-32 sm:w-40 md:w-56 aspect-[2/3] rounded-2xl border-4 overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.6)] transform transition-all group-hover:scale-105 group-hover:rotate-2 ${style.border} bg-neutral-900 relative mb-4 ${effectClass}`}>
                   <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
                   {card.maxSupply > 0 && (
                     <div className="absolute top-2 right-2 bg-black/90 text-white text-[8px] sm:text-[10px] px-2 py-1 rounded-md border border-neutral-700 font-black z-10">
@@ -1395,7 +1525,7 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
                   <div className={`text-[10px] sm:text-xs font-black uppercase tracking-widest flex justify-center items-center gap-1 ${style.text}`}>
                     <Sparkles size={12} /> {card.rarity}
                   </div>
-                  <h3 className="font-bold text-white text-xs sm:text-sm truncate w-full">{card.name}</h3>
+                  <h3 className="font-bold text-white text-xs sm:text-sm truncate w-full group-hover:text-yellow-100 transition-colors">{card.name}</h3>
                 </div>
               </div>
             );
@@ -1415,13 +1545,12 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
   const selectedPack = packs.find((p) => p.id === selectedPackId);
 
   if (selectedPack) {
-    // СОРТУВАННЯ КАРТОК ПАКУ ЗА РІДКІСТЮ (Найрідкісніші ЗВЕРХУ)
     const packCards = cardsCatalog
       .filter((c) => c.packId === selectedPackId)
       .sort((a, b) => {
           const wA = rarities.find(r => r.name === a.rarity)?.weight || 100;
           const wB = rarities.find(r => r.name === b.rarity)?.weight || 100;
-          return wA - wB; // Чим менша вага (шанс), тим вище картка в списку
+          return wA - wB; 
       });
 
     return (
@@ -1561,16 +1690,26 @@ function OpenButton({ amount, cost, onClick, opening, color = "bg-yellow-500 hov
   );
 }
 
-// --- ІНВЕНТАР ---
-function InventoryView({ inventory, rarities, sellDuplicate, sellAllDuplicates, sellEveryDuplicate, sellPrice, catalogTotal, setViewingCard, setListingCard, packsCatalog }) {
+// --- ІНВЕНТАР ТА ВІТРИНИ ---
+function InventoryView({ 
+    inventory, rarities, sellDuplicate, sellAllDuplicates, sellEveryDuplicate, 
+    sellPrice, catalogTotal, setViewingCard, setListingCard, packsCatalog, 
+    showcases, createShowcase, deleteShowcase, setMainShowcase, saveShowcaseCards, profile, cardsCatalog 
+}) {
+  const [tab, setTab] = useState("cards"); // "cards" or "showcases"
+  
+  // Фільтри для карток
   const [sortBy, setSortBy] = useState("rarity");
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterPack, setFilterPack] = useState("all");
 
+  // Стейт для конструктора вітрин
+  const [selectedShowcaseId, setSelectedShowcaseId] = useState(null);
+  const [builderCards, setBuilderCards] = useState([]);
+  
   const categories = ["all", ...new Set(packsCatalog.map(p => p.category || "Базові"))];
   const relevantPacks = filterCategory === "all" ? packsCatalog : packsCatalog.filter(p => (p.category || "Базові") === filterCategory);
 
-  // Спочатку фільтруємо
   let filteredInventory = inventory.filter(item => {
      const pack = packsCatalog.find(p => p.id === item.card.packId);
      const cat = pack ? (pack.category || "Базові") : "Базові";
@@ -1580,11 +1719,10 @@ function InventoryView({ inventory, rarities, sellDuplicate, sellAllDuplicates, 
      return true;
   });
 
-  // Потім сортуємо
   filteredInventory.sort((a, b) => {
     if (sortBy === "rarity") {
        const getWeight = (rName) => rarities.find((x) => x.name === rName)?.weight || 100;
-       return getWeight(a.card.rarity) - getWeight(b.card.rarity); // Найрідкісніші зверху
+       return getWeight(a.card.rarity) - getWeight(b.card.rarity); 
     }
     if (sortBy === "amount") return b.amount - a.amount;
     if (sortBy === "name") return a.card.name.localeCompare(b.card.name);
@@ -1604,108 +1742,303 @@ function InventoryView({ inventory, rarities, sellDuplicate, sellAllDuplicates, 
     return sum;
   }, 0);
 
+  // --- ЛОГІКА БІЛДЕРА ВІТРИН ---
+  const activeShowcase = showcases.find(s => s.id === selectedShowcaseId);
+
+  useEffect(() => {
+     if (activeShowcase) {
+         setBuilderCards(activeShowcase.cardIds || []);
+     } else {
+         setBuilderCards([]);
+     }
+  }, [selectedShowcaseId, showcases]);
+
+  const handleCreateShowcaseSubmit = (e) => {
+      e.preventDefault();
+      const name = e.target.showcaseName.value;
+      createShowcase(name);
+      e.target.reset();
+  };
+
+  const addCardToShowcase = (cardId) => {
+      if (!activeShowcase) return;
+      if (builderCards.length >= 10) return alert("Ліміт вітрини: 10 карток!");
+      
+      const ownedCount = inventory.find(i => i.card.id === cardId)?.amount || 0;
+      const inShowcaseCount = builderCards.filter(id => id === cardId).length;
+      
+      if (inShowcaseCount < ownedCount) {
+          const newCards = [...builderCards, cardId];
+          setBuilderCards(newCards);
+          saveShowcaseCards(activeShowcase.id, newCards);
+      } else {
+          alert("У вас більше немає копій цієї картки!");
+      }
+  };
+
+  const removeCardFromShowcase = (indexToRemove) => {
+      if (!activeShowcase) return;
+      const newCards = [...builderCards];
+      newCards.splice(indexToRemove, 1);
+      setBuilderCards(newCards);
+      saveShowcaseCards(activeShowcase.id, newCards);
+  };
+
+  // Drag and Drop (HTML5)
+  const onDragStart = (e, cardId) => {
+      e.dataTransfer.setData("cardId", cardId);
+  };
+  const onDragOver = (e) => {
+      e.preventDefault();
+  };
+  const onDrop = (e) => {
+      e.preventDefault();
+      const cardId = e.dataTransfer.getData("cardId");
+      if (cardId) addCardToShowcase(cardId);
+  };
+
   return (
-    <div>
-      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-neutral-900/80 p-5 rounded-2xl border border-neutral-800 shadow-lg">
-        <h2 className="text-2xl font-black flex items-center gap-3 text-white uppercase tracking-wider shrink-0">
-          <LayoutGrid className="text-yellow-500 w-8 h-8" /> Моя Колекція <span className="text-neutral-500 text-lg">({inventory.length}/{catalogTotal})</span>
-        </h2>
-        
-        <div className="flex flex-wrap justify-center md:justify-end items-center gap-3 w-full">
-          {duplicatesEarnedCoins > 0 && (
-            <button 
-              onClick={() => {
-                  if (confirm(`Продати всі відображені дублікати та отримати ${duplicatesEarnedCoins} монет?`)) {
-                      sellEveryDuplicate();
-                  }
-              }} 
-              className="bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-500 hover:to-emerald-400 text-white font-bold py-3 px-5 rounded-xl shadow-[0_0_20px_rgba(16,185,129,0.3)] flex items-center gap-2 whitespace-nowrap transition-transform transform hover:scale-105 order-last lg:order-first w-full lg:w-auto justify-center"
-              title="Залишити по 1 екземпляру кожної карти з поточного списку"
-            >
-              <Zap size={18} /> Продати дублікати (+{duplicatesEarnedCoins} <Coins size={14}/>)
-            </button>
-          )}
-
-          <select value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); setFilterPack("all"); }} className="bg-neutral-950 border border-neutral-700 text-sm font-medium rounded-xl px-4 py-3 w-full sm:w-auto focus:outline-none text-white cursor-pointer hover:bg-neutral-800 h-full">
-             {categories.map(c => <option key={c} value={c}>{c === "all" ? "Всі Категорії" : c}</option>)}
-          </select>
-          
-          <select value={filterPack} onChange={(e) => setFilterPack(e.target.value)} className="bg-neutral-950 border border-neutral-700 text-sm font-medium rounded-xl px-4 py-3 w-full sm:w-auto focus:outline-none text-white cursor-pointer hover:bg-neutral-800 h-full">
-             <option value="all">Всі Паки</option>
-             {relevantPacks.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-            className="bg-neutral-950 border border-purple-900/50 text-sm font-bold rounded-xl px-4 py-3 w-full sm:w-auto focus:outline-none text-purple-400 cursor-pointer hover:bg-neutral-800 h-full"
-          >
-            <option value="rarity">За Рідкістю</option>
-            <option value="pack">За Паком</option>
-            <option value="amount">За Дублікатами</option>
-            <option value="name">За Алфавітом</option>
-          </select>
-        </div>
+    <div className="pb-10">
+      <div className="flex bg-neutral-900 border border-neutral-800 rounded-xl p-1 max-w-sm mx-auto mb-6">
+         <button onClick={() => setTab("cards")} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors flex items-center justify-center gap-2 ${tab === "cards" ? "bg-blue-600 text-white" : "text-neutral-400 hover:text-white"}`}>
+            <LayoutGrid size={16}/> Всі Картки
+         </button>
+         <button onClick={() => setTab("showcases")} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors flex items-center justify-center gap-2 ${tab === "showcases" ? "bg-blue-600 text-white" : "text-neutral-400 hover:text-white"}`}>
+            <Star size={16}/> Мої Вітрини
+         </button>
       </div>
 
-      {filteredInventory.length === 0 ? (
-        <div className="text-center py-32 text-neutral-500 bg-neutral-900/30 rounded-3xl border-2 border-dashed border-neutral-800">
-          <PackageOpen size={80} className="mx-auto mb-6 opacity-20" />
-          <p className="text-xl font-medium mb-2 text-neutral-400">Картки не знайдено.</p>
+      {tab === "cards" ? (
+        // РЕЖИМ: ЗВИЧАЙНИЙ ІНВЕНТАР
+        <div className="animate-in fade-in">
+          <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-neutral-900/80 p-5 rounded-2xl border border-neutral-800 shadow-lg">
+            <h2 className="text-2xl font-black flex items-center gap-3 text-white uppercase tracking-wider shrink-0">
+              <LayoutGrid className="text-yellow-500 w-8 h-8" /> Інвентар <span className="text-neutral-500 text-lg">({inventory.length}/{catalogTotal})</span>
+            </h2>
+            
+            <div className="flex flex-wrap justify-center md:justify-end items-center gap-3 w-full">
+              {duplicatesEarnedCoins > 0 && (
+                <button 
+                  onClick={() => {
+                      if (confirm(`Продати всі відображені дублікати та отримати ${duplicatesEarnedCoins} монет?`)) {
+                          sellEveryDuplicate(filteredInventory);
+                      }
+                  }} 
+                  className="bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-500 hover:to-emerald-400 text-white font-bold py-3 px-5 rounded-xl shadow-[0_0_20px_rgba(16,185,129,0.3)] flex items-center gap-2 whitespace-nowrap transition-transform transform hover:scale-105 order-last lg:order-first w-full lg:w-auto justify-center"
+                  title="Залишити по 1 екземпляру кожної карти з поточного списку"
+                >
+                  <Zap size={18} /> Продати дублікати (+{duplicatesEarnedCoins} <Coins size={14}/>)
+                </button>
+              )}
+
+              <select value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); setFilterPack("all"); }} className="bg-neutral-950 border border-neutral-700 text-sm font-medium rounded-xl px-4 py-3 w-full sm:w-auto focus:outline-none text-white cursor-pointer hover:bg-neutral-800 h-full">
+                 {categories.map(c => <option key={c} value={c}>{c === "all" ? "Всі Категорії" : c}</option>)}
+              </select>
+              
+              <select value={filterPack} onChange={(e) => setFilterPack(e.target.value)} className="bg-neutral-950 border border-neutral-700 text-sm font-medium rounded-xl px-4 py-3 w-full sm:w-auto focus:outline-none text-white cursor-pointer hover:bg-neutral-800 h-full">
+                 <option value="all">Всі Паки</option>
+                 {relevantPacks.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="bg-neutral-950 border border-purple-900/50 text-sm font-bold rounded-xl px-4 py-3 w-full sm:w-auto focus:outline-none text-purple-400 cursor-pointer hover:bg-neutral-800 h-full">
+                <option value="rarity">За Рідкістю</option>
+                <option value="pack">За Паком</option>
+                <option value="amount">За Дублікатами</option>
+                <option value="name">За Алфавітом</option>
+              </select>
+            </div>
+          </div>
+
+          {filteredInventory.length === 0 ? (
+            <div className="text-center py-32 text-neutral-500 bg-neutral-900/30 rounded-3xl border-2 border-dashed border-neutral-800">
+              <PackageOpen size={80} className="mx-auto mb-6 opacity-20" />
+              <p className="text-xl font-medium mb-2 text-neutral-400">Картки не знайдено.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+              {filteredInventory.map((item, index) => {
+                const style = getCardStyle(item.card.rarity, rarities);
+                const effectClass = item.card.effect ? `effect-${item.card.effect}` : '';
+                const currentSellPrice = item.card.sellPrice ? Number(item.card.sellPrice) : sellPrice;
+
+                return (
+                  <div key={item.card.id} className="flex flex-col items-center group cursor-pointer animate-in fade-in zoom-in-95 duration-500" style={{ animationDelay: `${index * 15}ms`, fillMode: "backwards" }}>
+                    <div onClick={() => setViewingCard({ card: item.card, amount: item.amount })} className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-3 transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-[0_15px_30px_rgba(0,0,0,0.6)] ${style.border} ${effectClass}`}>
+                      {item.amount > 1 && (
+                        <div className="absolute top-2 right-2 bg-neutral-950/90 backdrop-blur text-white font-black text-xs px-3 py-1.5 rounded-full z-10 border border-neutral-700 shadow-xl">
+                          x{item.amount}
+                        </div>
+                      )}
+                      <img src={item.card.image} alt={item.card.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                    </div>
+                    <div className="w-full flex flex-col items-center text-center px-1">
+                      <div className={`text-[10px] font-black uppercase tracking-widest mb-1 ${style.text}`}>{item.card.rarity}</div>
+                      <div className="font-bold text-sm leading-tight text-white mb-3 line-clamp-1 w-full group-hover:text-yellow-100 transition-colors" title={item.card.name}>{item.card.name}</div>
+                      
+                      {item.amount > 1 ? (
+                        <div className="w-full flex flex-col gap-1.5">
+                          <button onClick={(e) => { e.stopPropagation(); sellDuplicate(item.card.id); }} className="w-full bg-neutral-800 hover:bg-neutral-700 text-xs py-2 rounded-lg text-neutral-200 font-bold transition-all hover:shadow-[0_0_15px_rgba(255,255,255,0.1)]">
+                            Продати (+{currentSellPrice} <Coins size={10} className="inline text-yellow-500" />)
+                          </button>
+                          <div className="flex gap-1.5 w-full">
+                             {item.amount > 2 && (
+                                <button onClick={(e) => { e.stopPropagation(); sellAllDuplicates(item.card.id); }} className="flex-1 bg-neutral-800/80 hover:bg-red-900/50 text-[10px] py-1.5 rounded-lg text-neutral-400 font-bold transition-all border border-neutral-700 hover:border-red-900/50" title="Залишити лише 1">
+                                   Всі (-1)
+                                </button>
+                             )}
+                             <button onClick={(e) => { e.stopPropagation(); setListingCard(item.card); }} className="flex-1 bg-blue-900/40 hover:bg-blue-600 text-[10px] py-1.5 rounded-lg text-blue-400 hover:text-white font-bold transition-all border border-blue-800/50">
+                                На Ринок
+                             </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="w-full flex flex-col gap-1.5">
+                            <div className="w-full text-xs py-1.5 text-neutral-500 font-medium">
+                                Один екземпляр
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); setListingCard(item.card); }} className="w-full bg-blue-900/40 hover:bg-blue-600 text-xs py-2 rounded-lg text-blue-400 hover:text-white font-bold transition-all border border-blue-800/50">
+                                Виставити на Ринок
+                            </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-          {filteredInventory.map((item, index) => {
-            const style = getCardStyle(item.card.rarity, rarities);
-            const effectClass = item.card.effect ? `effect-${item.card.effect}` : '';
-            const currentSellPrice = item.card.sellPrice ? Number(item.card.sellPrice) : sellPrice;
+        // РЕЖИМ: ВІТРИНИ
+        <div className="animate-in fade-in">
+           
+           {!activeShowcase ? (
+               <div>
+                  <div className="bg-neutral-900 p-6 rounded-2xl border border-neutral-800 mb-6 text-center">
+                      <h3 className="text-xl font-bold text-white mb-4"><Star className="inline text-yellow-500 mb-1"/> Створити нову вітрину</h3>
+                      <form onSubmit={handleCreateShowcaseSubmit} className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto">
+                          <input type="text" name="showcaseName" placeholder="Назва вітрини..." required className="flex-1 bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white focus:border-yellow-500 outline-none" />
+                          <button type="submit" className="bg-yellow-600 hover:bg-yellow-500 text-yellow-950 font-bold py-3 px-6 rounded-xl transition-colors">Створити</button>
+                      </form>
+                      <p className="text-xs text-neutral-500 mt-3">Ліміт: 5 вітрин по 10 карток.</p>
+                  </div>
 
-            return (
-              <div key={item.card.id} className="flex flex-col items-center group cursor-pointer animate-in fade-in zoom-in-95 duration-500" style={{ animationDelay: `${index * 15}ms`, fillMode: "backwards" }}>
-                <div onClick={() => setViewingCard({ card: item.card, amount: item.amount })} className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-3 transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-[0_15px_30px_rgba(0,0,0,0.6)] ${style.border} ${effectClass}`}>
-                  {item.amount > 1 && (
-                    <div className="absolute top-2 right-2 bg-neutral-950/90 backdrop-blur text-white font-black text-xs px-3 py-1.5 rounded-full z-10 border border-neutral-700 shadow-xl">
-                      x{item.amount}
-                    </div>
-                  )}
-                  <img src={item.card.image} alt={item.card.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                </div>
-                <div className="w-full flex flex-col items-center text-center px-1">
-                  <div className={`text-[10px] font-black uppercase tracking-widest mb-1 ${style.text}`}>{item.card.rarity}</div>
-                  <div className="font-bold text-sm leading-tight text-white mb-3 line-clamp-1 w-full group-hover:text-yellow-100 transition-colors" title={item.card.name}>{item.card.name}</div>
-                  
-                  {item.amount > 1 ? (
-                    <div className="w-full flex flex-col gap-1.5">
-                      <button onClick={(e) => { e.stopPropagation(); sellDuplicate(item.card.id); }} className="w-full bg-neutral-800 hover:bg-neutral-700 text-xs py-2 rounded-lg text-neutral-200 font-bold transition-all hover:shadow-[0_0_15px_rgba(255,255,255,0.1)]">
-                        Продати (+{currentSellPrice} <Coins size={10} className="inline text-yellow-500" />)
-                      </button>
-                      <div className="flex gap-1.5 w-full">
-                         {item.amount > 2 && (
-                            <button onClick={(e) => { e.stopPropagation(); sellAllDuplicates(item.card.id); }} className="flex-1 bg-neutral-800/80 hover:bg-red-900/50 text-[10px] py-1.5 rounded-lg text-neutral-400 font-bold transition-all border border-neutral-700 hover:border-red-900/50" title="Залишити лише 1">
-                               Всі (-1)
-                            </button>
-                         )}
-                         <button onClick={(e) => { e.stopPropagation(); setListingCard(item.card); }} className="flex-1 bg-blue-900/40 hover:bg-blue-600 text-[10px] py-1.5 rounded-lg text-blue-400 hover:text-white font-bold transition-all border border-blue-800/50">
-                            На Ринок
-                         </button>
-                      </div>
-                    </div>
+                  {showcases.length === 0 ? (
+                      <div className="text-center py-20 text-neutral-500">У вас ще немає жодної вітрини.</div>
                   ) : (
-                    <div className="w-full flex flex-col gap-1.5">
-                        <div className="w-full text-xs py-1.5 text-neutral-500 font-medium">
-                            Один екземпляр
-                        </div>
-                        <button onClick={(e) => { e.stopPropagation(); setListingCard(item.card); }} className="w-full bg-blue-900/40 hover:bg-blue-600 text-xs py-2 rounded-lg text-blue-400 hover:text-white font-bold transition-all border border-blue-800/50">
-                            Виставити на Ринок
-                        </button>
-                    </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {showcases.map(s => (
+                              <div key={s.id} onClick={() => setSelectedShowcaseId(s.id)} className={`bg-neutral-900 border-2 rounded-2xl p-5 cursor-pointer transition-all hover:-translate-y-1 ${profile?.mainShowcaseId === s.id ? 'border-yellow-500 shadow-[0_0_20px_rgba(234,179,8,0.2)]' : 'border-neutral-800 hover:border-neutral-600'}`}>
+                                  <div className="flex justify-between items-start mb-2">
+                                     <h4 className="font-black text-lg text-white truncate pr-2">{s.name}</h4>
+                                     {profile?.mainShowcaseId === s.id && <Star size={20} className="text-yellow-500 fill-yellow-500 shrink-0"/>}
+                                  </div>
+                                  <div className="text-sm text-neutral-400 mb-4">{s.cardIds?.length || 0}/10 Карток</div>
+                                  <div className="flex -space-x-2 overflow-hidden h-12">
+                                      {/* Мініатюри карток */}
+                                      {(s.cardIds || []).slice(0,5).map((cId, i) => {
+                                          const c = cardsCatalog.find(x => x.id === cId);
+                                          if (!c) return null;
+                                          return <img key={i} src={c.image} alt="m" className="inline-block h-12 w-8 object-cover rounded border border-neutral-700 bg-neutral-950" />
+                                      })}
+                                      {(s.cardIds?.length || 0) > 5 && <div className="h-12 w-8 rounded border border-neutral-700 bg-neutral-900 flex items-center justify-center text-[10px] font-bold text-white z-10">+{s.cardIds.length - 5}</div>}
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
                   )}
-                </div>
-              </div>
-            );
-          })}
+               </div>
+           ) : (
+               // РЕДАКТОР ВІТРИНИ
+               <div className="animate-in slide-in-from-right-4">
+                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 bg-neutral-900 p-5 rounded-2xl border border-neutral-800">
+                       <div>
+                           <button onClick={() => setSelectedShowcaseId(null)} className="text-neutral-400 hover:text-white text-sm font-bold flex items-center gap-1 mb-2"><ArrowLeft size={16}/> До всіх вітрин</button>
+                           <h2 className="text-2xl font-black text-white flex items-center gap-2">{activeShowcase.name} <span className="text-neutral-500 text-sm font-normal">({builderCards.length}/10)</span></h2>
+                       </div>
+                       <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                           {profile?.mainShowcaseId !== activeShowcase.id ? (
+                               <button onClick={() => setMainShowcase(activeShowcase.id)} className="bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-500 border border-yellow-600/50 px-4 py-2 rounded-xl font-bold transition-colors flex items-center gap-2 flex-1 md:flex-none justify-center">
+                                  <Star size={16}/> Зробити Головною
+                               </button>
+                           ) : (
+                               <div className="bg-yellow-500 text-yellow-950 px-4 py-2 rounded-xl font-bold flex items-center gap-2 flex-1 md:flex-none justify-center">
+                                  <Star size={16} className="fill-yellow-950"/> Головна Вітрина
+                               </div>
+                           )}
+                           <button onClick={() => { setSelectedShowcaseId(null); deleteShowcase(activeShowcase.id); }} className="bg-red-900/40 hover:bg-red-900 text-red-400 px-4 py-2 rounded-xl font-bold transition-colors flex items-center gap-2 flex-1 md:flex-none justify-center">
+                               <Trash2 size={16}/>
+                           </button>
+                       </div>
+                   </div>
+
+                   <p className="text-center text-neutral-400 text-sm mb-4">Натисніть на картку в інвентарі або перетягніть її сюди, щоб додати у вітрину.</p>
+
+                   {/* ЗОНА ВІТРИНИ (DROP ZONE) */}
+                   <div 
+                      className={`bg-neutral-900/50 border-2 border-dashed ${builderCards.length < 10 ? 'border-purple-500/50' : 'border-neutral-700'} rounded-3xl p-6 min-h-[200px] mb-8 flex flex-wrap justify-center gap-4 transition-colors`}
+                      onDragOver={onDragOver}
+                      onDrop={onDrop}
+                   >
+                       {builderCards.map((cId, index) => {
+                           const cData = cardsCatalog.find(c => c.id === cId);
+                           if (!cData) return null;
+                           const style = getCardStyle(cData.rarity, rarities);
+                           const effectClass = cData.effect ? `effect-${cData.effect}` : '';
+                           
+                           return (
+                               <div key={index} onClick={() => removeCardFromShowcase(index)} className="relative group cursor-pointer animate-in zoom-in-95">
+                                   <div className={`w-24 sm:w-32 aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-950 ${style.border} ${effectClass}`}>
+                                       <img src={cData.image} alt={cData.name} className="w-full h-full object-cover group-hover:opacity-50 transition-opacity" />
+                                       <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                           <div className="bg-red-600 text-white rounded-full p-2"><Trash2 size={20}/></div>
+                                       </div>
+                                   </div>
+                               </div>
+                           );
+                       })}
+                       
+                       {/* Пусті слоти для візуалу */}
+                       {Array.from({ length: Math.max(0, 5 - builderCards.length) }).map((_, i) => (
+                           <div key={`empty-${i}`} className="w-24 sm:w-32 aspect-[2/3] rounded-xl border-2 border-dashed border-neutral-800 bg-neutral-950/30 flex items-center justify-center opacity-50">
+                               <GripHorizontal className="text-neutral-700" size={32}/>
+                           </div>
+                       ))}
+                   </div>
+
+                   {/* ІНВЕНТАР ДЛЯ ВИБОРУ */}
+                   <h3 className="text-lg font-bold text-white mb-4">Ваш Інвентар:</h3>
+                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 opacity-90 hover:opacity-100 transition-opacity">
+                       {filteredInventory.map((item) => {
+                          const style = getCardStyle(item.card.rarity, rarities);
+                          // Розрахунок доступних
+                          const inShowcaseCount = builderCards.filter(id => id === item.card.id).length;
+                          const available = item.amount - inShowcaseCount;
+                          const disabled = available <= 0 || builderCards.length >= 10;
+
+                          return (
+                              <div 
+                                key={item.card.id} 
+                                draggable={!disabled}
+                                onDragStart={(e) => onDragStart(e, item.card.id)}
+                                onClick={() => !disabled && addCardToShowcase(item.card.id)} 
+                                className={`relative aspect-[2/3] rounded-lg border-2 overflow-hidden bg-neutral-900 transition-all ${disabled ? 'opacity-30 grayscale cursor-not-allowed' : 'cursor-pointer hover:-translate-y-1 hover:border-purple-500'} ${style.border}`}
+                              >
+                                  {available > 0 && (
+                                    <div className="absolute top-1 right-1 bg-black/80 text-white font-bold text-[9px] px-1.5 py-0.5 rounded-sm z-10 border border-neutral-700">
+                                      {available}
+                                    </div>
+                                  )}
+                                  <img src={item.card.image} alt={item.card.name} className="w-full h-full object-cover pointer-events-none" />
+                              </div>
+                          )
+                       })}
+                   </div>
+               </div>
+           )}
         </div>
       )}
+
     </div>
   );
 }
@@ -1781,7 +2114,7 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
               className={`flex items-center justify-between p-4 border-b border-neutral-800/50 last:border-0 transition-colors cursor-pointer group ${leader.uid === currentUid ? "bg-yellow-900/10" : "hover:bg-neutral-800/80"} ${leader.isBanned ? "opacity-50" : ""}`}
             >
               <div className="flex items-center gap-4">
-                <div className={`w-10 h-10 flex items-center justify-center font-black text-lg rounded-xl border transition-transform group-hover:scale-110 ${
+                <div className={`w-10 h-10 flex items-center justify-center font-black text-lg rounded-xl border transition-transform group-hover:scale-110 shrink-0 ${
                   realRank === 1 ? "bg-yellow-500 text-yellow-950 border-yellow-400" :
                   realRank === 2 ? "bg-gray-300 text-gray-800 border-gray-100" :
                   realRank === 3 ? "bg-amber-700 text-orange-100 border-amber-600" :
@@ -1789,24 +2122,25 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
                 }`}>
                   {realRank}
                 </div>
-                <div>
-                  <div className="font-bold text-white flex items-center gap-2 text-lg">
+                
+                <PlayerAvatar profile={leader} className="w-10 h-10 rounded-full shrink-0" iconSize={18} />
+
+                <div className="min-w-0">
+                  <div className="font-bold text-white flex items-center gap-2 text-base sm:text-lg truncate">
                     {leader.nickname} 
-                    {leader.isSuperAdmin && <Crown size={14} className="text-red-500" title="Супер Адмін" />}
-                    {leader.isAdmin && !leader.isSuperAdmin && <Shield size={14} className="text-purple-500" title="Адмін" />}
-                    {leader.isBanned && <Ban size={14} className="text-red-600" title="Забанений" />}
-                    {leader.uid === currentUid && <span className="text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded-full ml-2">ВИ</span>}
+                    {leader.isBanned && <Ban size={14} className="text-red-600 shrink-0" title="Забанений" />}
+                    {leader.uid === currentUid && <span className="text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded-full ml-2 shrink-0">ВИ</span>}
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 shrink-0">
                 <div className="text-right">
                   <div className="text-xs text-neutral-500 font-bold uppercase">{ratingSort === "cards" ? "Унікальні карти" : "Монети"}</div>
                   <div className={`text-xl font-black ${ratingSort === "cards" ? "text-blue-400" : "text-yellow-500"}`}>
                       {ratingSort === "cards" ? (leader.uniqueCardsCount || 0) : (leader.coins || 0)}
                   </div>
                 </div>
-                <ArrowLeft size={16} className="text-neutral-600 group-hover:text-yellow-500 transform rotate-180 transition-colors" />
+                <ArrowLeft size={16} className="text-neutral-600 group-hover:text-yellow-500 transform rotate-180 transition-colors hidden sm:block" />
               </div>
             </div>
           );
@@ -1821,6 +2155,7 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
 function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, rarities, setViewingCard, packsCatalog }) {
   const [playerInfo, setPlayerInfo] = useState(null);
   const [playerInventory, setPlayerInventory] = useState([]);
+  const [mainShowcase, setMainShowcase] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const [sortBy, setSortBy] = useState("rarity");
@@ -1838,6 +2173,7 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
         setPlayerInfo(foundProfile);
 
         if (foundProfile) {
+          // Завантажуємо інвентар
           const invSnap = await getDocs(collection(db, "artifacts", appId, "users", targetUid, "inventory"));
           const invList = [];
           invSnap.forEach((doc) => invList.push({ id: doc.id, ...doc.data() }));
@@ -1848,6 +2184,14 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
           }).filter(Boolean);
           
           setPlayerInventory(fullInv);
+
+          // Завантажуємо головну вітрину
+          if (foundProfile.mainShowcaseId) {
+             const showcaseDoc = await getDoc(doc(db, "artifacts", appId, "users", targetUid, "showcases", foundProfile.mainShowcaseId));
+             if (showcaseDoc.exists()) {
+                 setMainShowcase(showcaseDoc.data());
+             }
+          }
         }
       } catch (err) {
         console.error("Помилка завантаження профілю гравця", err);
@@ -1888,6 +2232,19 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
     return 0;
   });
 
+  // Відображення карток вітрини (з перевіркою чи вони досі є в інвентарі гравця)
+  const validShowcaseCards = [];
+  if (mainShowcase && mainShowcase.cardIds) {
+      // Робимо копію інвентарю для коректного підрахунку кількостей
+      const tempInv = JSON.parse(JSON.stringify(playerInventory));
+      for (const cid of mainShowcase.cardIds) {
+          const invItem = tempInv.find(i => i.card.id === cid);
+          if (invItem && invItem.amount > 0) {
+              validShowcaseCards.push(invItem.card);
+              invItem.amount -= 1;
+          }
+      }
+  }
 
   return (
     <div className="animate-in slide-in-from-right-8 duration-500">
@@ -1897,9 +2254,9 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
 
       <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 text-center relative overflow-hidden mb-8">
         <div className={`absolute top-0 left-0 w-full h-32 bg-gradient-to-b ${playerInfo.isBanned ? "from-red-900/40" : playerInfo.isSuperAdmin ? "from-orange-900/40" : playerInfo.isAdmin ? "from-purple-900/40" : "from-blue-900/20"} to-transparent`}></div>
-        <div className={`w-24 h-24 bg-neutral-800 rounded-full flex items-center justify-center font-black text-4xl border-4 shadow-xl mx-auto relative z-10 mb-4 ${playerInfo.isBanned ? "text-red-600 border-red-800" : playerInfo.isSuperAdmin ? "text-red-400 border-red-500" : playerInfo.isAdmin ? "text-purple-400 border-purple-500" : "text-blue-500 border-neutral-700"}`}>
-          {playerInfo.isBanned ? <Ban size={48} /> : playerInfo.isSuperAdmin ? <Crown size={48} /> : playerInfo.isAdmin ? <Shield size={48} /> : playerInfo.nickname?.charAt(0).toUpperCase()}
-        </div>
+        
+        <PlayerAvatar profile={playerInfo} className="w-24 h-24 mx-auto mb-4 text-4xl rounded-full relative z-10" iconSize={48} />
+        
         <h2 className="text-3xl font-black text-white mb-1 relative z-10 flex justify-center items-center gap-2">
             {playerInfo.nickname}
             {playerInfo.isBanned && <span className="text-[10px] bg-red-900/50 text-red-400 px-2 py-1 rounded-full uppercase tracking-widest border border-red-800">Бан</span>}
@@ -1931,6 +2288,29 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
           </div>
         </div>
       </div>
+
+      {/* ВІТРИНА ГРАВЦЯ */}
+      {mainShowcase && validShowcaseCards.length > 0 && (
+         <div className="mb-10">
+             <div className="flex items-center gap-3 mb-4 justify-center">
+                 <Star className="text-yellow-500 fill-yellow-500" size={24} />
+                 <h3 className="text-2xl font-black text-white uppercase tracking-widest">{mainShowcase.name}</h3>
+             </div>
+             <div className="bg-neutral-900 border-2 border-yellow-500/30 rounded-3xl p-6 flex flex-wrap justify-center gap-4 shadow-[0_0_30px_rgba(234,179,8,0.1)]">
+                 {validShowcaseCards.map((card, idx) => {
+                    const style = getCardStyle(card.rarity, rarities);
+                    const effectClass = card.effect ? `effect-${card.effect}` : '';
+                    return (
+                        <div key={idx} onClick={() => setViewingCard({ card, amount: 1 })} className="relative group cursor-pointer animate-in zoom-in-95 hover:-translate-y-2 transition-transform">
+                            <div className={`w-28 sm:w-36 aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-950 shadow-lg ${style.border} ${effectClass}`}>
+                                <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
+                            </div>
+                        </div>
+                    );
+                 })}
+             </div>
+         </div>
+      )}
 
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
         <h3 className="text-xl font-black text-white uppercase tracking-wider flex items-center gap-2">
@@ -1992,9 +2372,10 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
 }
 
 // --- ПРОФІЛЬ ---
-function ProfileView({ profile, user, db, appId, handleLogout, showToast, canClaimDaily, marketListings, cardsCatalog, rarities }) {
+function ProfileView({ profile, user, db, appId, handleLogout, showToast, canClaimDaily, marketListings, cardsCatalog, rarities, showcases, fullInventory, setViewingCard }) {
   const [promoInput, setPromoInput] = useState("");
   const [activeTab, setActiveTab] = useState("main"); 
+  const [isEditingAvatar, setIsEditingAvatar] = useState(false);
   
   const isGoogleLinked = user?.providerData?.some(p => p.providerId === 'google.com');
 
@@ -2010,6 +2391,20 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
             showToast("Помилка прив'язки: " + e.message, "error");
         }
      }
+  };
+
+  const handleAvatarSubmit = async (e) => {
+      e.preventDefault();
+      const url = e.target.avatarUrl.value.trim();
+      try {
+          const profileRef = doc(db, "artifacts", appId, "public", "data", "profiles", user.uid);
+          await updateDoc(profileRef, { avatarUrl: url });
+          showToast("Аватарку успішно оновлено!", "success");
+          setIsEditingAvatar(false);
+      } catch (err) {
+          console.error(err);
+          showToast("Помилка оновлення аватарки.", "error");
+      }
   };
 
   const handlePromoSubmit = async (e) => {
@@ -2150,6 +2545,20 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
       }
   };
 
+  // Логіка відображення вітрини у власному профілі
+  const mainShowcase = showcases.find(s => s.id === profile?.mainShowcaseId);
+  const validShowcaseCards = [];
+  if (mainShowcase && mainShowcase.cardIds) {
+      const tempInv = JSON.parse(JSON.stringify(fullInventory));
+      for (const cid of mainShowcase.cardIds) {
+          const invItem = tempInv.find(i => i.card.id === cid);
+          if (invItem && invItem.amount > 0) {
+              validShowcaseCards.push(invItem.card);
+              invItem.amount -= 1;
+          }
+      }
+  }
+
   return (
     <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in duration-500">
       
@@ -2166,9 +2575,30 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
          <>
             <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 text-center relative overflow-hidden">
               <div className={`absolute top-0 left-0 w-full h-32 bg-gradient-to-b ${profile?.isSuperAdmin ? "from-red-900/40" : profile?.isAdmin ? "from-purple-900/40" : "from-yellow-900/20"} to-transparent`}></div>
-              <div className={`w-24 h-24 bg-neutral-800 rounded-full flex items-center justify-center font-black text-4xl border-4 shadow-xl mx-auto relative z-10 mb-4 ${profile?.isSuperAdmin ? "text-red-400 border-red-500" : profile?.isAdmin ? "text-purple-400 border-purple-500" : "text-yellow-500 border-neutral-700"}`}>
-                {profile?.isSuperAdmin ? <Crown size={48} /> : profile?.isAdmin ? <Shield size={48} /> : profile?.nickname?.charAt(0).toUpperCase()}
+              
+              {/* Блок Аватарки */}
+              <div className="relative w-28 h-28 mx-auto mb-4 z-10 group">
+                 <PlayerAvatar profile={profile} className="w-full h-full rounded-full text-5xl" iconSize={50} />
+                 <button 
+                    onClick={() => setIsEditingAvatar(!isEditingAvatar)} 
+                    className="absolute inset-0 bg-black/60 rounded-full flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer border-2 border-dashed border-neutral-500"
+                 >
+                    <Camera className="text-white mb-1" size={24} />
+                    <span className="text-[10px] text-white font-bold uppercase tracking-widest">Змінити</span>
+                 </button>
               </div>
+
+              {isEditingAvatar && (
+                 <form onSubmit={handleAvatarSubmit} className="relative z-10 mb-6 bg-neutral-950 p-4 rounded-2xl border border-neutral-800 animate-in zoom-in-95">
+                    <label className="text-xs text-neutral-400 font-bold mb-2 block">Пряме посилання на картинку (URL):</label>
+                    <div className="flex gap-2">
+                        <input type="url" name="avatarUrl" defaultValue={profile?.avatarUrl} placeholder="https://..." className="flex-1 bg-neutral-900 border border-neutral-700 rounded-xl px-3 py-2 text-white outline-none focus:border-blue-500 text-sm" />
+                        <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-sm transition-colors">Зберегти</button>
+                    </div>
+                    <button type="button" onClick={() => {setIsEditingAvatar(false); handleAvatarSubmit({preventDefault:()=>{}, target: {avatarUrl: {value: ""}}})}} className="text-xs text-red-400 mt-3 underline hover:text-red-300">Видалити аватарку</button>
+                 </form>
+              )}
+
               <h2 className="text-3xl font-black text-white mb-1 relative z-10">{profile?.nickname}</h2>
               <div className="text-neutral-500 text-sm mb-2">ID: {profile?.uid?.substring(0,8)}...</div>
               
@@ -2190,6 +2620,29 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
                 </div>
               </div>
             </div>
+
+            {/* ВІТРИНА ГРАВЦЯ У ВЛАСНОМУ ПРОФІЛІ */}
+            {mainShowcase && validShowcaseCards.length > 0 && (
+               <div className="mb-6">
+                   <div className="flex items-center gap-3 mb-4 justify-center">
+                       <Star className="text-yellow-500 fill-yellow-500" size={24} />
+                       <h3 className="text-2xl font-black text-white uppercase tracking-widest">{mainShowcase.name}</h3>
+                   </div>
+                   <div className="bg-neutral-900 border-2 border-yellow-500/30 rounded-3xl p-6 flex flex-wrap justify-center gap-4 shadow-[0_0_30px_rgba(234,179,8,0.1)]">
+                       {validShowcaseCards.map((card, idx) => {
+                          const style = getCardStyle(card.rarity, rarities);
+                          const effectClass = card.effect ? `effect-${card.effect}` : '';
+                          return (
+                              <div key={idx} onClick={() => setViewingCard({ card, amount: 1 })} className="relative group cursor-pointer animate-in zoom-in-95 hover:-translate-y-2 transition-transform">
+                                  <div className={`w-24 sm:w-32 md:w-36 aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-950 shadow-lg ${style.border} ${effectClass}`}>
+                                      <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
+                                  </div>
+                              </div>
+                          );
+                       })}
+                   </div>
+               </div>
+            )}
 
             {/* БЛОК СТАТИСТИКИ */}
             <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 mb-6">
@@ -2895,14 +3348,15 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
 
                 return (
                   <div key={i} className="flex flex-col sm:flex-row sm:justify-between sm:items-center py-3 px-4 border border-neutral-800 bg-neutral-950 rounded-xl gap-4">
-                    <div>
-                      <div className="font-bold text-white flex items-center gap-2">
-                        {u.nickname} 
-                        {u.isSuperAdmin && <Crown size={14} className="text-red-500" title="Супер Адмін" />}
-                        {u.isAdmin && !u.isSuperAdmin && <Shield size={14} className="text-purple-500" title="Адмін" />}
-                        {u.isBanned && <span className="text-[10px] bg-red-900/50 text-red-400 px-2 py-0.5 rounded border border-red-800 uppercase font-black tracking-widest">Бан</span>}
+                    <div className="flex items-center gap-3">
+                      <PlayerAvatar profile={u} className="w-10 h-10 rounded-full shrink-0" iconSize={18} />
+                      <div>
+                        <div className="font-bold text-white flex items-center gap-2">
+                          {u.nickname} 
+                          {u.isBanned && <span className="text-[10px] bg-red-900/50 text-red-400 px-2 py-0.5 rounded border border-red-800 uppercase font-black tracking-widest">Бан</span>}
+                        </div>
+                        <div className="text-xs text-neutral-500">{u.email || "Приховано (Google)"}</div>
                       </div>
-                      <div className="text-xs text-neutral-500">{u.email || "Приховано (Google)"}</div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="hidden sm:block text-right mr-2">
