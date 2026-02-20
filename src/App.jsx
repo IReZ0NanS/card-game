@@ -1349,7 +1349,14 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
   const selectedPack = packs.find((p) => p.id === selectedPackId);
 
   if (selectedPack) {
-    const packCards = cardsCatalog.filter((c) => c.packId === selectedPackId);
+    // ТУТ ДОДАНО СОРТУВАННЯ КАРТОК ПАКУ ЗА РІДКІСТЮ
+    const packCards = cardsCatalog
+      .filter((c) => c.packId === selectedPackId)
+      .sort((a, b) => {
+          const wA = rarities.find(r => r.name === a.rarity)?.weight || 0;
+          const wB = rarities.find(r => r.name === b.rarity)?.weight || 0;
+          return wB - wA; // Від Звичайних до найрідкісніших
+      });
 
     return (
       <div className="pb-10 animate-in fade-in slide-in-from-right-8 duration-500">
@@ -1493,7 +1500,7 @@ function InventoryView({ inventory, rarities, sellDuplicate, sellAllDuplicates, 
 
   const sortedInventory = [...inventory].sort((a, b) => {
     const getWeight = (rName) => rarities.find((x) => x.name === rName)?.weight || 100;
-    if (sortBy === "rarity") return getWeight(a.card.rarity) - getWeight(b.card.rarity);
+    if (sortBy === "rarity") return getWeight(b.card.rarity) - getWeight(a.card.rarity);
     if (sortBy === "amount") return b.amount - a.amount;
     if (sortBy === "name") return a.card.name.localeCompare(b.card.name);
     return 0;
@@ -1738,7 +1745,7 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
 
           fullInv.sort((a, b) => {
             const getW = (rName) => rarities.find(x => x.name === rName)?.weight || 100;
-            return getW(a.card.rarity) - getW(b.card.rarity);
+            return getW(b.card.rarity) - getW(a.card.rarity);
           });
           
           setPlayerInventory(fullInv);
@@ -2500,11 +2507,19 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
   }
 
   const filteredPacks = packsCatalog.filter(p => p.name.toLowerCase().includes(packSearchTerm.toLowerCase()));
-  const filteredCards = cardsCatalog.filter(c => {
-    const matchesSearch = c.name.toLowerCase().includes(cardSearchTerm.toLowerCase());
-    const matchesPack = cardPackFilter === "all" || c.packId === cardPackFilter;
-    return matchesSearch && matchesPack;
-  });
+  
+  // ТУТ ДОДАНО СОРТУВАННЯ В АДМІН-ПАНЕЛІ ЗА РІДКІСТЮ
+  const filteredCards = cardsCatalog
+    .filter(c => {
+      const matchesSearch = c.name.toLowerCase().includes(cardSearchTerm.toLowerCase());
+      const matchesPack = cardPackFilter === "all" || c.packId === cardPackFilter;
+      return matchesSearch && matchesPack;
+    })
+    .sort((a, b) => {
+        const wA = rarities.find(r => r.name === a.rarity)?.weight || 0;
+        const wB = rarities.find(r => r.name === b.rarity)?.weight || 0;
+        return wB - wA; // Від Звичайних до найрідкісніших
+    });
 
   return (
     <div className="max-w-4xl mx-auto pb-10 relative">
