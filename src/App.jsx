@@ -55,6 +55,16 @@ import {
   limit
 } from "firebase/firestore";
 
+// --- ГЛОБАЛЬНІ ФУНКЦІЇ ---
+const isToday = (dateString) => {
+  if (!dateString) return false;
+  const d = new Date(dateString);
+  const today = new Date();
+  return d.getDate() === today.getDate() &&
+         d.getMonth() === today.getMonth() &&
+         d.getFullYear() === today.getFullYear();
+};
+
 // --- CSS ДЛЯ КРУТИХ ЕФЕКТІВ КАРТОК ---
 const globalStyles = `
   .effect-holo::after {
@@ -114,6 +124,14 @@ const globalStyles = `
     98% { filter: hue-rotate(-90deg); transform: skewX(-5deg); }
     99% { filter: hue-rotate(180deg); transform: skewX(2deg); }
   }
+  
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 `;
 
 // --- НАЛАШТУВАННЯ FIREBASE ---
@@ -139,6 +157,7 @@ const DEFAULT_PACKS = [
   {
     id: "p1",
     name: "Наруто Базовий",
+    category: "Базові",
     cost: 50,
     image: "https://placehold.co/400x400/222/aaa?text=Базовий\nПак",
     customWeights: {},
@@ -147,6 +166,7 @@ const DEFAULT_PACKS = [
   {
     id: "p2",
     name: "Елітний Шинобі",
+    category: "Елітні",
     cost: 100,
     image: "https://placehold.co/400x400/581c87/fff?text=Елітний\nПак",
     customWeights: {},
@@ -223,6 +243,8 @@ export default function App() {
   const [viewingCard, setViewingCard] = useState(null);
   const [viewingPlayerProfile, setViewingPlayerProfile] = useState(null);
   const [toastMsg, setToastMsg] = useState({ text: "", type: "" });
+
+  const canClaimDaily = profile && !isToday(profile.lastDailyClaim);
 
   // --- СИСТЕМА ЗАХИСТУ ВІД ВІЧНОЇ ЗАГРУЗКИ ---
   useEffect(() => {
@@ -755,9 +777,25 @@ export default function App() {
               <div className="text-xs text-neutral-400 leading-tight">Профіль</div>
             </div>
           </button>
-          <div className="bg-neutral-950 px-5 py-2 rounded-xl border border-neutral-800 shadow-inner flex gap-2 items-center">
-            <Coins size={20} className="text-yellow-500" />
-            <span className="text-yellow-500 font-black text-lg">{profile?.coins}</span>
+
+          <div className="flex items-center gap-2 sm:gap-4">
+             {canClaimDaily && (
+                <button 
+                   onClick={() => setCurrentView("profile")} 
+                   className="relative bg-orange-500/20 text-orange-400 p-2.5 rounded-xl border border-orange-500/30 hover:bg-orange-500/30 transition-colors flex items-center justify-center group" 
+                   title="Забрати щоденний бонус!"
+                >
+                   <Gift size={20} className="animate-pulse group-hover:animate-none" />
+                   <span className="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5">
+                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                       <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-orange-500"></span>
+                   </span>
+                </button>
+             )}
+             <div className="bg-neutral-950 px-5 py-2.5 rounded-xl border border-neutral-800 shadow-inner flex gap-2 items-center">
+               <Coins size={20} className="text-yellow-500" />
+               <span className="text-yellow-500 font-black text-lg">{profile?.coins}</span>
+             </div>
           </div>
         </div>
       </header>
@@ -811,6 +849,7 @@ export default function App() {
             handleLogout={handleLogout}
             showToast={showToast}
             inventoryCount={fullInventory.length}
+            canClaimDaily={canClaimDaily}
           />
         )}
         {currentView === "rating" && (
@@ -887,6 +926,7 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
   
   const [roulettePos, setRoulettePos] = useState(0);
   const [rouletteOffset, setRouletteOffset] = useState(0);
+  const [activeCategory, setActiveCategory] = useState("all");
 
   useEffect(() => {
     if (isRouletteSpinning) {
@@ -1051,24 +1091,41 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
     );
   }
 
-  // Фільтруємо приховані паки для звичайних гравців
   const visiblePacks = isAdmin ? packs : packs.filter(p => !p.isHidden);
+  const categoriesList = ["all", ...new Set(visiblePacks.map(p => p.category || "Базові"))];
+  const displayedPacks = visiblePacks.filter(p => activeCategory === "all" || (p.category || "Базові") === activeCategory);
 
   return (
     <div className="pb-10 animate-in fade-in zoom-in-95 duration-500">
-      <div className="text-center mb-8">
+      <div className="text-center mb-6">
         <h2 className="text-3xl font-black mb-2 text-white uppercase tracking-widest">Магазин Паків</h2>
         <p className="text-neutral-400 text-sm">Оберіть пак, Мій лорд, і випробуйте удачу!</p>
       </div>
 
+      {categoriesList.length > 2 && (
+         <div className="flex gap-2 overflow-x-auto pb-4 mb-4 hide-scrollbar justify-center max-w-4xl mx-auto">
+            {categoriesList.map(c => (
+               <button 
+                 key={c} 
+                 onClick={() => setActiveCategory(c)}
+                 className={`px-5 py-2.5 rounded-full font-bold whitespace-nowrap transition-colors border ${activeCategory === c ? "bg-purple-600 border-purple-500 text-white" : "bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white"}`}
+               >
+                 {c === "all" ? "Всі Паки" : c}
+               </button>
+            ))}
+         </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
-        {visiblePacks.map((pack) => (
+        {displayedPacks.map((pack) => (
           <button key={pack.id} onClick={() => setSelectedPackId(pack.id)} className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 flex flex-col items-center justify-between group hover:border-neutral-600 transition-colors shadow-lg text-left w-full cursor-pointer hover:-translate-y-1 transform duration-300 relative overflow-hidden">
             {pack.isHidden && (
                 <div className="absolute top-3 right-3 bg-red-900 text-red-100 text-[10px] px-2 py-1 rounded border border-red-500 font-bold uppercase z-10 shadow-lg">
                     Приховано
                 </div>
             )}
+            
+            <div className="text-[10px] text-purple-400 font-bold uppercase tracking-widest text-center mb-1 relative z-10">{pack.category || "Базові"}</div>
             <h3 className="text-xl font-bold text-white mb-2 text-center w-full relative z-10">{pack.name}</h3>
             
             <div className="flex items-center justify-center gap-1.5 text-yellow-500 font-bold mb-4 bg-yellow-500/10 px-4 py-1.5 rounded-full border border-yellow-500/20 shadow-inner relative z-10">
@@ -1085,7 +1142,7 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
             </div>
           </button>
         ))}
-        {visiblePacks.length === 0 && <div className="col-span-full text-center text-neutral-500 py-10">Паки відсутні.</div>}
+        {displayedPacks.length === 0 && <div className="col-span-full text-center text-neutral-500 py-10">У цій категорії паків ще немає.</div>}
       </div>
     </div>
   );
@@ -1425,7 +1482,7 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
 }
 
 // --- ПРОФІЛЬ ---
-function ProfileView({ profile, user, db, appId, handleLogout, showToast }) {
+function ProfileView({ profile, user, db, appId, handleLogout, showToast, canClaimDaily }) {
   const [promoInput, setPromoInput] = useState("");
   
   const handlePromoSubmit = async (e) => {
@@ -1527,15 +1584,6 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast }) {
     }
   };
 
-  const isToday = (dateString) => {
-    if (!dateString) return false;
-    const d = new Date(dateString);
-    const today = new Date();
-    return d.getDate() === today.getDate() &&
-           d.getMonth() === today.getMonth() &&
-           d.getFullYear() === today.getFullYear();
-  };
-  const canClaimDaily = !isToday(profile?.lastDailyClaim);
   const currentStreak = profile?.dailyStreak || 0;
   const nextStreakDay = currentStreak >= 7 ? 1 : currentStreak + 1;
 
@@ -1611,16 +1659,18 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
   
   const [banModalUser, setBanModalUser] = useState(null);
   const [banReason, setBanReason] = useState("");
-  const [banDuration, setBanDuration] = useState("permanent");
+  const [banDurationValue, setBanDurationValue] = useState("");
+  const [banDurationUnit, setBanDurationUnit] = useState("h"); // m, h, d, perm
 
   const [adminAddCardId, setAdminAddCardId] = useState("");
   const [adminAddCardAmount, setAdminAddCardAmount] = useState(1);
   const [adminAddCoinsAmount, setAdminAddCoinsAmount] = useState(100);
+  const [adminSetCoinsAmount, setAdminSetCoinsAmount] = useState(0);
 
   const [editingCard, setEditingCard] = useState(null);
   const [cardForm, setCardForm] = useState({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "" });
   const [editingPack, setEditingPack] = useState(null);
-  const [packForm, setPackForm] = useState({ id: "", name: "", cost: 50, image: "", customWeights: {}, isHidden: false });
+  const [packForm, setPackForm] = useState({ id: "", name: "", category: "Базові", cost: 50, image: "", customWeights: {}, isHidden: false });
 
   const [allPromos, setAllPromos] = useState([]);
   const [promoForm, setPromoForm] = useState({ code: "", reward: 100, maxGlobalUses: 0, maxUserUses: 1 });
@@ -1666,7 +1716,9 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
 
   const handleInspectUser = async (uid) => {
     setLoadingUserInv(true);
-    setViewingUser(allUsers.find(u => u.uid === uid));
+    const u = allUsers.find(x => x.uid === uid);
+    setViewingUser(u);
+    if(u) setAdminSetCoinsAmount(u.coins || 0);
     try {
       const invRef = collection(db, "artifacts", appId, "users", uid, "inventory");
       const snap = await getDocs(invRef);
@@ -1685,8 +1737,17 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
       if (!banModalUser) return;
       
       let banUntil = null;
-      if (banDuration === "1d") banUntil = new Date(Date.now() + 86400000).toISOString();
-      if (banDuration === "7d") banUntil = new Date(Date.now() + 7 * 86400000).toISOString();
+      if (banDurationUnit !== "perm") {
+          const val = parseInt(banDurationValue, 10);
+          if (isNaN(val) || val <= 0) return showToast("Введіть коректний час бану!", "error");
+          
+          let multiplier = 1;
+          if (banDurationUnit === 'm') multiplier = 60 * 1000;
+          if (banDurationUnit === 'h') multiplier = 60 * 60 * 1000;
+          if (banDurationUnit === 'd') multiplier = 24 * 60 * 60 * 1000;
+          
+          banUntil = new Date(Date.now() + val * multiplier).toISOString();
+      }
 
       try {
           await updateDoc(doc(db, "artifacts", GAME_ID, "public", "data", "profiles", banModalUser.uid), {
@@ -1697,6 +1758,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
           showToast(`Гравця ${banModalUser.nickname} заблоковано.`, "success");
           setBanModalUser(null);
           setBanReason("");
+          setBanDurationValue("");
       } catch (e) {
           console.error(e);
           showToast("Помилка під час блокування.", "error");
@@ -1772,10 +1834,26 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
       showToast(`Успішно ${actionText} ${Math.abs(adminAddCoinsAmount)} монет.`, "success");
       
       setViewingUser(prev => ({...prev, coins: prev.coins + adminAddCoinsAmount}));
+      setAdminSetCoinsAmount(prev => prev + adminAddCoinsAmount);
       setAdminAddCoinsAmount(100);
     } catch (e) {
       console.error(e);
       showToast("Помилка нарахування монет.", "error");
+    }
+  };
+
+  const setExactCoinsToUser = async () => {
+    if (adminSetCoinsAmount === "" || isNaN(adminSetCoinsAmount) || adminSetCoinsAmount < 0) return;
+    try {
+      const val = parseInt(adminSetCoinsAmount, 10);
+      const profileRef = doc(db, "artifacts", appId, "public", "data", "profiles", viewingUser.uid);
+      await updateDoc(profileRef, { coins: val });
+      
+      showToast(`Баланс змінено на рівно ${val} монет.`, "success");
+      setViewingUser(prev => ({...prev, coins: val}));
+    } catch (e) {
+      console.error(e);
+      showToast("Помилка встановлення балансу.", "error");
     }
   };
 
@@ -1807,13 +1885,13 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
     e.preventDefault();
     let updatedPacks = [...packsCatalog];
     if (editingPack) {
-      updatedPacks = updatedPacks.map((p) => p.id === editingPack.id ? { ...packForm, id: editingPack.id, cost: Number(packForm.cost), isHidden: !!packForm.isHidden } : p);
+      updatedPacks = updatedPacks.map((p) => p.id === editingPack.id ? { ...packForm, id: editingPack.id, cost: Number(packForm.cost), isHidden: !!packForm.isHidden, category: packForm.category || "Базові" } : p);
     } else {
-      updatedPacks.push({ ...packForm, id: "p" + Date.now(), cost: Number(packForm.cost), isHidden: !!packForm.isHidden });
+      updatedPacks.push({ ...packForm, id: "p" + Date.now(), cost: Number(packForm.cost), isHidden: !!packForm.isHidden, category: packForm.category || "Базові" });
     }
     await updateDoc(doc(db, "artifacts", appId, "public", "data", "gameSettings", "main"), { packs: updatedPacks });
     setEditingPack(null);
-    setPackForm({ id: "", name: "", cost: 50, image: "", customWeights: {}, isHidden: false });
+    setPackForm({ id: "", name: "", category: "Базові", cost: 50, image: "", customWeights: {}, isHidden: false });
     showToast("Паки оновлено!", "success");
   };
 
@@ -1914,15 +1992,21 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                       </div>
                       <div>
                           <label className="text-xs font-bold text-neutral-400 uppercase mb-1 block">Термін:</label>
-                          <select value={banDuration} onChange={e => setBanDuration(e.target.value)} className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white focus:border-red-500 outline-none">
-                              <option value="1d">На 1 день</option>
-                              <option value="7d">На 7 днів</option>
-                              <option value="permanent">Назавжди</option>
-                          </select>
+                          <div className="flex gap-2">
+                             {banDurationUnit !== "perm" && (
+                                <input type="number" min="1" value={banDurationValue} onChange={e => setBanDurationValue(e.target.value)} placeholder="Час..." required className="w-1/2 bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white focus:border-red-500 outline-none" />
+                             )}
+                             <select value={banDurationUnit} onChange={e => {setBanDurationUnit(e.target.value); if(e.target.value==="perm") setBanDurationValue("");}} className="w-1/2 flex-1 bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white focus:border-red-500 outline-none">
+                                 <option value="m">Хвилин</option>
+                                 <option value="h">Годин</option>
+                                 <option value="d">Днів</option>
+                                 <option value="perm">Назавжди</option>
+                             </select>
+                          </div>
                       </div>
                       <div className="flex gap-3 pt-2">
                           <button type="submit" className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl transition-colors">Забанити</button>
-                          <button type="button" onClick={() => {setBanModalUser(null); setBanReason("");}} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
+                          <button type="button" onClick={() => {setBanModalUser(null); setBanReason(""); setBanDurationValue("");}} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
                       </div>
                   </form>
               </div>
@@ -1971,14 +2055,26 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                 </button>
               </div>
 
-              <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 mb-6 flex flex-col sm:flex-row gap-3 items-end sm:items-center">
-                <div className="flex-1 w-full">
-                    <label className="text-xs text-neutral-400 font-bold mb-1 block">Нарахувати / Відняти монети гравцю (можна з мінусом):</label>
-                    <input type="number" value={adminAddCoinsAmount} onChange={(e) => setAdminAddCoinsAmount(Number(e.target.value))} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-white outline-none focus:border-yellow-500" />
+              <div className="flex flex-col md:flex-row gap-4 mb-6">
+                <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 flex-1 flex flex-col gap-3 justify-end">
+                    <div>
+                        <label className="text-xs text-neutral-400 font-bold mb-1 block">Встановити точний баланс:</label>
+                        <input type="number" value={adminSetCoinsAmount} onChange={(e) => setAdminSetCoinsAmount(e.target.value)} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-white outline-none focus:border-yellow-500" />
+                    </div>
+                    <button onClick={setExactCoinsToUser} className="bg-yellow-600 hover:bg-yellow-500 text-yellow-950 font-bold px-4 py-2 rounded-lg w-full transition-colors h-10">
+                        Встановити
+                    </button>
                 </div>
-                <button onClick={giveCoinsToUser} className="bg-yellow-600 hover:bg-yellow-500 text-yellow-950 font-bold px-4 py-2 rounded-lg w-full sm:w-auto transition-colors h-10">
-                    Застосувати
-                </button>
+
+                <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 flex-1 flex flex-col gap-3 justify-end">
+                    <div>
+                        <label className="text-xs text-neutral-400 font-bold mb-1 block">Нарахувати / Відняти монети (можна з мінусом):</label>
+                        <input type="number" value={adminAddCoinsAmount} onChange={(e) => setAdminAddCoinsAmount(Number(e.target.value))} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-white outline-none focus:border-yellow-500" />
+                    </div>
+                    <button onClick={giveCoinsToUser} className="bg-yellow-600 hover:bg-yellow-500 text-yellow-950 font-bold px-4 py-2 rounded-lg w-full transition-colors h-10">
+                        Додати/Відняти
+                    </button>
+                </div>
               </div>
 
               <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2">Інвентар: <span className="text-yellow-500">{viewingUser.nickname}</span> ({viewingUser.coins} <Coins size={16} />)</h3>
@@ -2125,8 +2221,9 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
             <h3 className="text-xl font-bold mb-4 text-purple-400">{editingPack ? `Редагування Паку` : "Створити Пак"}</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <input type="text" placeholder="Назва Паку" value={packForm.name} onChange={(e) => setPackForm({ ...packForm, name: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white" required />
+              <input type="text" placeholder="Категорія (напр. Базові)" value={packForm.category} onChange={(e) => setPackForm({ ...packForm, category: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white" required />
               <input type="number" placeholder="Вартість" value={packForm.cost} onChange={(e) => setPackForm({ ...packForm, cost: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white" min="0" required />
-              <input type="text" placeholder="URL Картинки" value={packForm.image} onChange={(e) => setPackForm({ ...packForm, image: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white sm:col-span-2" required />
+              <input type="text" placeholder="URL Картинки" value={packForm.image} onChange={(e) => setPackForm({ ...packForm, image: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white" required />
               
               <div className="sm:col-span-2 mt-2 p-4 border border-neutral-800 rounded-xl bg-neutral-950/50">
                 <h4 className="text-neutral-400 text-sm font-bold mb-3">Кастомні шанси випадіння (залиште пустим, щоб використовувати глобальні):</h4>
@@ -2157,7 +2254,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
             <div className="flex gap-3">
               <button type="submit" className="flex-1 bg-purple-600 text-white font-bold py-3 rounded-xl">Зберегти Пак</button>
               {editingPack && (
-                <button type="button" onClick={() => { setEditingPack(null); setPackForm({ id: "", name: "", cost: 50, image: "", customWeights: {}, isHidden: false }); }} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
+                <button type="button" onClick={() => { setEditingPack(null); setPackForm({ id: "", name: "", category: "Базові", cost: 50, image: "", customWeights: {}, isHidden: false }); }} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
               )}
             </div>
           </form>
@@ -2173,10 +2270,11 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
               <div key={pack.id} className="bg-neutral-900 rounded-xl p-4 border border-neutral-800 relative group">
                 {pack.isHidden && <span className="text-[10px] bg-neutral-800 text-neutral-400 px-2 py-0.5 rounded border border-neutral-600 uppercase font-black tracking-widest absolute top-2 right-2 z-10">Приховано</span>}
                 <img src={pack.image} alt={pack.name} className={`w-24 h-24 object-cover rounded-lg mx-auto mb-3 ${pack.isHidden ? 'opacity-50 grayscale' : ''}`} />
+                <div className="text-[10px] text-purple-400 font-bold uppercase tracking-widest text-center mb-1">{pack.category || "Базові"}</div>
                 <h4 className="text-center font-bold text-white mb-1">{pack.name}</h4>
                 <div className="text-center text-yellow-500 font-bold text-sm mb-4">{pack.cost} Монет</div>
                 <div className="flex gap-2">
-                  <button onClick={() => { setEditingPack(pack); setPackForm({...pack, customWeights: pack.customWeights || {}}); }} className="flex-1 py-2 bg-blue-600/20 text-blue-400 rounded-lg text-sm font-bold">
+                  <button onClick={() => { setEditingPack(pack); setPackForm({...pack, customWeights: pack.customWeights || {}, category: pack.category || "Базові"}); }} className="flex-1 py-2 bg-blue-600/20 text-blue-400 rounded-lg text-sm font-bold">
                     Редагувати
                   </button>
                   <button onClick={() => deletePack(pack.id)} className="flex-1 py-2 bg-red-600/20 text-red-400 rounded-lg text-sm font-bold">
