@@ -55,6 +55,67 @@ import {
   limit
 } from "firebase/firestore";
 
+// --- CSS ДЛЯ КРУТИХ ЕФЕКТІВ КАРТОК ---
+const globalStyles = `
+  .effect-holo::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(105deg, transparent 20%, rgba(255,215,0,0.15) 30%, rgba(255,0,0,0.15) 45%, rgba(0,255,255,0.15) 60%, transparent 80%);
+    background-size: 300% 300%;
+    animation: holo-shine 6s infinite linear;
+    mix-blend-mode: screen;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0.7;
+  }
+  @keyframes holo-shine {
+    0% { background-position: 300% 0; }
+    100% { background-position: -300% 0; }
+  }
+
+  .effect-foil::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(110deg, transparent 25%, rgba(255, 255, 255, 0.2) 40%, rgba(255, 255, 255, 0.8) 50%, rgba(255, 255, 255, 0.2) 60%, transparent 75%);
+    background-size: 400% 400%;
+    animation: foil-glint 4s infinite ease-in-out;
+    mix-blend-mode: overlay;
+    pointer-events: none;
+    z-index: 5;
+  }
+  @keyframes foil-glint {
+    0% { background-position: 100% 100%; }
+    50% { background-position: 0% 0%; }
+    100% { background-position: 100% 100%; }
+  }
+
+  .effect-glow::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    box-shadow: inset 0 0 30px rgba(255, 215, 0, 0.8);
+    animation: inner-glow 2s infinite alternate;
+    pointer-events: none;
+    z-index: 5;
+  }
+  @keyframes inner-glow {
+    0% { opacity: 0.3; }
+    100% { opacity: 1; }
+  }
+  
+  .effect-glitch {
+    animation: glitch-anim 4s infinite;
+  }
+  @keyframes glitch-anim {
+    0%, 96%, 100% { filter: hue-rotate(0deg); transform: skewX(0deg); }
+    97% { filter: hue-rotate(90deg); transform: skewX(5deg); }
+    98% { filter: hue-rotate(-90deg); transform: skewX(-5deg); }
+    99% { filter: hue-rotate(180deg); transform: skewX(2deg); }
+  }
+`;
+
 // --- НАЛАШТУВАННЯ FIREBASE ---
 const firebaseConfig = typeof __firebase_config !== "undefined" 
   ? JSON.parse(__firebase_config) 
@@ -80,23 +141,33 @@ const DEFAULT_PACKS = [
     name: "Наруто Базовий",
     cost: 50,
     image: "https://placehold.co/400x400/222/aaa?text=Базовий\nПак",
-    customWeights: {} 
+    customWeights: {},
+    isHidden: false
   },
   {
     id: "p2",
     name: "Елітний Шинобі",
     cost: 100,
     image: "https://placehold.co/400x400/581c87/fff?text=Елітний\nПак",
-    customWeights: {}
+    customWeights: {},
+    isHidden: false
   },
 ];
 
 const DEFAULT_CARDS_DB = [
-  { id: "c1", packId: "p1", name: "Учень Академії", rarity: "Звичайна", image: "https://placehold.co/400x600/222/aaa?text=Учень\nАкадемії", maxSupply: 0, pulledCount: 0, sellPrice: 15 },
-  { id: "c2", packId: "p1", name: "Тренувальний манекен", rarity: "Звичайна", image: "https://placehold.co/400x600/222/aaa?text=Манекен", maxSupply: 0, pulledCount: 0, sellPrice: 15 },
-  { id: "c4", packId: "p1", name: "Генін", rarity: "Рідкісна", image: "https://placehold.co/400x600/1e3a8a/ccc?text=Генін", maxSupply: 0, pulledCount: 0, sellPrice: 30 },
-  { id: "c6", packId: "p2", name: "Елітний Джонін", rarity: "Епічна", image: "https://placehold.co/400x600/581c87/eee?text=Елітний\nДжонін", maxSupply: 500, pulledCount: 0, sellPrice: 100 },
-  { id: "c8", packId: "p2", name: "Легендарний Хокаге", rarity: "Легендарна", image: "https://placehold.co/400x600/854d0e/fff?text=Легендарний\nХокаге", maxSupply: 10, pulledCount: 0, sellPrice: 500 },
+  { id: "c1", packId: "p1", name: "Учень Академії", rarity: "Звичайна", image: "https://placehold.co/400x600/222/aaa?text=Учень\nАкадемії", maxSupply: 0, pulledCount: 0, sellPrice: 15, effect: "" },
+  { id: "c2", packId: "p1", name: "Тренувальний манекен", rarity: "Звичайна", image: "https://placehold.co/400x600/222/aaa?text=Манекен", maxSupply: 0, pulledCount: 0, sellPrice: 15, effect: "" },
+  { id: "c4", packId: "p1", name: "Генін", rarity: "Рідкісна", image: "https://placehold.co/400x600/1e3a8a/ccc?text=Генін", maxSupply: 0, pulledCount: 0, sellPrice: 30, effect: "" },
+  { id: "c6", packId: "p2", name: "Елітний Джонін", rarity: "Епічна", image: "https://placehold.co/400x600/581c87/eee?text=Елітний\nДжонін", maxSupply: 500, pulledCount: 0, sellPrice: 100, effect: "holo" },
+  { id: "c8", packId: "p2", name: "Легендарний Хокаге", rarity: "Легендарна", image: "https://placehold.co/400x600/854d0e/fff?text=Легендарний\nХокаге", maxSupply: 10, pulledCount: 0, sellPrice: 500, effect: "glow" },
+];
+
+const EFFECT_OPTIONS = [
+  { id: "", name: "Без ефекту" },
+  { id: "holo", name: "Голограма (Holo)" },
+  { id: "foil", name: "Металік (Foil)" },
+  { id: "glow", name: "Золоте світіння (Glow)" },
+  { id: "glitch", name: "Глітч (Glitch)" }
 ];
 
 const COLOR_PRESETS = {
@@ -271,6 +342,8 @@ export default function App() {
           email,
           coins: 200,
           totalCards: 0,
+          lastDailyClaim: null,
+          dailyStreak: 0,
           createdAt: new Date().toISOString(),
           promoUsed: false,
           isAdmin: false,
@@ -661,7 +734,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans pb-24">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans pb-24 relative">
+      <style>{globalStyles}</style>
+      
       <header className="bg-neutral-900 border-b border-neutral-800 sticky top-0 z-50 shadow-sm">
         <div className="max-w-5xl mx-auto px-4 py-3 flex justify-between items-center">
           <button
@@ -712,6 +787,7 @@ export default function App() {
             selectedPackId={selectedPackId}
             setSelectedPackId={setSelectedPackId}
             setViewingCard={setViewingCard}
+            isAdmin={profile?.isAdmin}
           />
         )}
         {currentView === "inventory" && (
@@ -807,7 +883,7 @@ function NavButton({ icon, label, isActive, onClick }) {
 }
 
 // --- МАГАЗИН ---
-function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRouletteSpinning, rouletteItems, pulledCards, setPulledCards, selectedPackId, setSelectedPackId, setViewingCard }) {
+function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRouletteSpinning, rouletteItems, pulledCards, setPulledCards, selectedPackId, setSelectedPackId, setViewingCard, isAdmin }) {
   
   const [roulettePos, setRoulettePos] = useState(0);
   const [rouletteOffset, setRouletteOffset] = useState(0);
@@ -851,8 +927,9 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
           >
               {rouletteItems.map((item, i) => {
                   const style = getCardStyle(item.rarity, rarities);
+                  const effectClass = item.effect ? `effect-${item.effect}` : '';
                   return (
-                      <div key={i} className={`w-40 h-56 rounded-2xl border-4 shrink-0 bg-neutral-950 relative overflow-hidden shadow-xl ${style.border}`}>
+                      <div key={i} className={`w-40 h-56 rounded-2xl border-4 shrink-0 bg-neutral-950 relative overflow-hidden shadow-xl ${style.border} ${effectClass}`}>
                           <img src={item.image} alt="card" className="absolute inset-0 w-full h-full object-cover" />
                           <div className="absolute bottom-0 left-0 right-0 bg-black/80 backdrop-blur text-center py-1.5 border-t border-neutral-800 z-10">
                              <span className={`text-[10px] font-black uppercase tracking-widest ${style.text}`}>{item.rarity}</span>
@@ -876,12 +953,13 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
         <div className="flex flex-wrap justify-center gap-6 mb-10 w-full">
           {pulledCards.map((card, index) => {
             const style = getCardStyle(card.rarity, rarities);
+            const effectClass = card.effect ? `effect-${card.effect}` : '';
             return (
               <div key={index} className="flex flex-col items-center animate-in zoom-in slide-in-from-bottom-6" style={{ animationDelay: `${index * 150}ms`, fillMode: 'both' }}>
-                <div className={`w-40 sm:w-56 aspect-[2/3] rounded-2xl border-4 overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.6)] transform transition-all hover:scale-105 hover:rotate-2 ${style.border} bg-neutral-900 relative mb-4`}>
+                <div className={`w-40 sm:w-56 aspect-[2/3] rounded-2xl border-4 overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.6)] transform transition-all hover:scale-105 hover:rotate-2 ${style.border} bg-neutral-900 relative mb-4 ${effectClass}`}>
                   <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
                   {card.maxSupply > 0 && (
-                    <div className="absolute top-2 right-2 bg-black/90 text-white text-[10px] px-2 py-1 rounded-md border border-neutral-700 font-black">
+                    <div className="absolute top-2 right-2 bg-black/90 text-white text-[10px] px-2 py-1 rounded-md border border-neutral-700 font-black z-10">
                       Лімітка
                     </div>
                   )}
@@ -947,10 +1025,11 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4">
             {packCards.map((card) => {
               const style = getCardStyle(card.rarity, rarities);
+              const effectClass = card.effect ? `effect-${card.effect}` : '';
               const isSoldOut = card.maxSupply > 0 && (card.pulledCount || 0) >= card.maxSupply;
               return (
                 <div key={card.id} className={`flex flex-col items-center group ${isSoldOut ? "opacity-50 grayscale" : "cursor-pointer"}`} onClick={() => !isSoldOut && setViewingCard({ card })}>
-                  <div className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-2 transition-all duration-300 ${!isSoldOut && "group-hover:-translate-y-2 group-hover:shadow-[0_10px_20px_rgba(0,0,0,0.5)]"} ${style.border}`}>
+                  <div className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-2 transition-all duration-300 ${!isSoldOut && "group-hover:-translate-y-2 group-hover:shadow-[0_10px_20px_rgba(0,0,0,0.5)]"} ${style.border} ${effectClass}`}>
                     <img src={card.image} alt={card.name} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
                     {card.maxSupply > 0 && (
                       <div className="absolute top-1 right-1 bg-black/90 text-white text-[8px] px-1.5 py-0.5 rounded border border-neutral-700 font-bold z-10">
@@ -972,6 +1051,9 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
     );
   }
 
+  // Фільтруємо приховані паки для звичайних гравців
+  const visiblePacks = isAdmin ? packs : packs.filter(p => !p.isHidden);
+
   return (
     <div className="pb-10 animate-in fade-in zoom-in-95 duration-500">
       <div className="text-center mb-8">
@@ -980,25 +1062,30 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
-        {packs.map((pack) => (
-          <button key={pack.id} onClick={() => setSelectedPackId(pack.id)} className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 flex flex-col items-center justify-between group hover:border-neutral-600 transition-colors shadow-lg text-left w-full cursor-pointer hover:-translate-y-1 transform duration-300">
-            <h3 className="text-xl font-bold text-white mb-2 text-center w-full">{pack.name}</h3>
+        {visiblePacks.map((pack) => (
+          <button key={pack.id} onClick={() => setSelectedPackId(pack.id)} className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 flex flex-col items-center justify-between group hover:border-neutral-600 transition-colors shadow-lg text-left w-full cursor-pointer hover:-translate-y-1 transform duration-300 relative overflow-hidden">
+            {pack.isHidden && (
+                <div className="absolute top-3 right-3 bg-red-900 text-red-100 text-[10px] px-2 py-1 rounded border border-red-500 font-bold uppercase z-10 shadow-lg">
+                    Приховано
+                </div>
+            )}
+            <h3 className="text-xl font-bold text-white mb-2 text-center w-full relative z-10">{pack.name}</h3>
             
-            <div className="flex items-center justify-center gap-1.5 text-yellow-500 font-bold mb-4 bg-yellow-500/10 px-4 py-1.5 rounded-full border border-yellow-500/20 shadow-inner">
+            <div className="flex items-center justify-center gap-1.5 text-yellow-500 font-bold mb-4 bg-yellow-500/10 px-4 py-1.5 rounded-full border border-yellow-500/20 shadow-inner relative z-10">
               {pack.cost} <Coins size={16} />
             </div>
 
             <div className="relative w-40 h-40 mb-6 flex justify-center items-center perspective-1000">
               <div className="w-full h-full bg-neutral-800 rounded-2xl border-4 border-neutral-700 shadow-xl overflow-hidden group-hover:shadow-[0_0_30px_rgba(255,255,255,0.1)] transition-all duration-300">
-                <img src={pack.image} alt={pack.name} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity group-hover:scale-105 duration-500" />
+                <img src={pack.image} alt={pack.name} className={`w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity group-hover:scale-105 duration-500 ${pack.isHidden ? 'grayscale' : ''}`} />
               </div>
             </div>
-            <div className="w-full py-3 rounded-xl font-bold text-neutral-400 group-hover:text-white bg-neutral-950 border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center gap-2 transition-all">
+            <div className="w-full py-3 rounded-xl font-bold text-neutral-400 group-hover:text-white bg-neutral-950 border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center gap-2 transition-all relative z-10">
               Детальніше
             </div>
           </button>
         ))}
-        {packs.length === 0 && <div className="col-span-full text-center text-neutral-500 py-10">Паки відсутні.</div>}
+        {visiblePacks.length === 0 && <div className="col-span-full text-center text-neutral-500 py-10">Паки відсутні.</div>}
       </div>
     </div>
   );
@@ -1085,11 +1172,12 @@ function InventoryView({ inventory, rarities, sellDuplicate, sellAllDuplicates, 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
           {sortedInventory.map((item, index) => {
             const style = getCardStyle(item.card.rarity, rarities);
+            const effectClass = item.card.effect ? `effect-${item.card.effect}` : '';
             const currentSellPrice = item.card.sellPrice ? Number(item.card.sellPrice) : sellPrice;
 
             return (
               <div key={item.card.id} className="flex flex-col items-center group cursor-pointer animate-in fade-in zoom-in-95 duration-500" style={{ animationDelay: `${index * 20}ms`, fillMode: "backwards" }} onClick={() => setViewingCard({ card: item.card, amount: item.amount })}>
-                <div className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-3 transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-[0_15px_30px_rgba(0,0,0,0.6)] ${style.border}`}>
+                <div className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-3 transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-[0_15px_30px_rgba(0,0,0,0.6)] ${style.border} ${effectClass}`}>
                   {item.amount > 1 && (
                     <div className="absolute top-2 right-2 bg-neutral-950/90 backdrop-blur text-white font-black text-xs px-3 py-1.5 rounded-full z-10 border border-neutral-700 shadow-xl">
                       x{item.amount}
@@ -1219,7 +1307,7 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
   );
 }
 
-// --- ПУБЛІЧНИЙ ПРОФІЛЬ ---
+// --- ПУБЛІЧНИЙ ПРОФІЛЬ ІНШОГО ГРАВЦЯ ---
 function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, rarities, setViewingCard }) {
   const [playerInfo, setPlayerInfo] = useState(null);
   const [playerInventory, setPlayerInventory] = useState([]);
@@ -1307,6 +1395,7 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4">
           {playerInventory.map((item, index) => {
             const style = getCardStyle(item.card.rarity, rarities);
+            const effectClass = item.card.effect ? `effect-${item.card.effect}` : '';
             return (
               <div 
                 key={item.card.id} 
@@ -1314,7 +1403,7 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
                 style={{ animationDelay: `${index * 15}ms`, fillMode: "backwards" }}
                 onClick={() => setViewingCard({ card: item.card, amount: item.amount })}
               >
-                <div className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-2 ${style.border}`}>
+                <div className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-2 ${style.border} ${effectClass}`}>
                   {item.amount > 1 && (
                     <div className="absolute top-1 right-1 bg-neutral-950/90 text-white font-black text-[10px] px-2 py-0.5 rounded-full z-10 border border-neutral-700 shadow-xl">
                       x{item.amount}
@@ -1399,6 +1488,57 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast }) {
     }
   };
 
+  const handleDailyClaim = async () => {
+    if (!profile) return;
+    const now = new Date();
+    let newStreak = 1;
+
+    if (profile.lastDailyClaim) {
+        const lastDate = new Date(profile.lastDailyClaim);
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const lastStart = new Date(lastDate.getFullYear(), lastDate.getMonth(), lastDate.getDate());
+        
+        const diffDays = Math.round((todayStart - lastStart) / (1000 * 60 * 60 * 24));
+        
+        if (diffDays === 0) {
+            showToast("Ви вже забрали винагороду сьогодні!", "error");
+            return;
+        } else if (diffDays === 1) {
+            newStreak = (profile.dailyStreak || 0) + 1;
+            if (newStreak > 7) newStreak = 1;
+        } else {
+            newStreak = 1; 
+        }
+    }
+
+    const reward = newStreak * 1000;
+    
+    try {
+        const profileRef = doc(db, "artifacts", appId, "public", "data", "profiles", user.uid);
+        await updateDoc(profileRef, {
+            coins: increment(reward),
+            lastDailyClaim: now.toISOString(),
+            dailyStreak: newStreak
+        });
+        showToast(`Щоденний бонус: +${reward} монет! (День ${newStreak}/7)`, "success");
+    } catch (e) {
+        console.error(e);
+        showToast("Помилка нарахування бонусу.", "error");
+    }
+  };
+
+  const isToday = (dateString) => {
+    if (!dateString) return false;
+    const d = new Date(dateString);
+    const today = new Date();
+    return d.getDate() === today.getDate() &&
+           d.getMonth() === today.getMonth() &&
+           d.getFullYear() === today.getFullYear();
+  };
+  const canClaimDaily = !isToday(profile?.lastDailyClaim);
+  const currentStreak = profile?.dailyStreak || 0;
+  const nextStreakDay = currentStreak >= 7 ? 1 : currentStreak + 1;
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 text-center relative overflow-hidden">
@@ -1423,13 +1563,34 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast }) {
         </div>
       </div>
 
-      <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6">
-        <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Gift className="text-purple-500" /> Ввести Промокод</h3>
-        <form onSubmit={handlePromoSubmit} className="flex gap-3">
-          <input type="text" value={promoInput} onChange={(e) => setPromoInput(e.target.value)} placeholder="Код..." className="flex-1 bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white uppercase" />
-          <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-6 rounded-xl transition-colors">Застосувати</button>
-        </form>
-      </div>
+      {canClaimDaily ? (
+        <div className="bg-gradient-to-r from-yellow-600 to-orange-500 rounded-3xl p-6 text-center shadow-[0_0_30px_rgba(217,119,6,0.3)] relative overflow-hidden mb-6">
+            <div className="relative z-10 flex flex-col items-center">
+               <Gift size={40} className="text-yellow-100 mb-2 animate-bounce" />
+               <h3 className="text-xl font-black text-white uppercase tracking-widest mb-1">Щоденна Нагорода</h3>
+               <p className="text-yellow-100 font-bold mb-4">День {nextStreakDay}/7 - Отримайте {nextStreakDay * 1000} монет!</p>
+               <button onClick={handleDailyClaim} className="bg-white text-orange-600 font-black py-3 px-8 rounded-xl hover:scale-105 transition-transform shadow-xl">
+                   Забрати зараз!
+               </button>
+            </div>
+        </div>
+      ) : (
+        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 text-center mb-6">
+            <CheckCircle2 size={32} className="text-neutral-500 mx-auto mb-2" />
+            <h3 className="text-neutral-400 font-bold">Нагороду вже забрано</h3>
+            <p className="text-xs text-neutral-500 mt-1">Повертайтеся завтра за наступним бонусом (Ваш стрік: День {currentStreak}/7)</p>
+        </div>
+      )}
+
+      {!profile?.isSuperAdmin && (
+        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6">
+          <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Gift className="text-purple-500" /> Ввести Промокод</h3>
+          <form onSubmit={handlePromoSubmit} className="flex gap-3">
+            <input type="text" value={promoInput} onChange={(e) => setPromoInput(e.target.value)} placeholder="Код..." className="flex-1 bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white uppercase" />
+            <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-6 rounded-xl transition-colors">Застосувати</button>
+          </form>
+        </div>
+      )}
 
       <button onClick={handleLogout} className="w-full bg-neutral-900 border border-red-900/50 hover:bg-red-900/20 p-4 rounded-xl text-left transition-colors flex justify-between group">
         <span className="font-bold text-red-400">Вийти з акаунта</span>
@@ -1448,7 +1609,6 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
   const [userInventory, setUserInventory] = useState([]);
   const [loadingUserInv, setLoadingUserInv] = useState(false);
   
-  // Бани та Права
   const [banModalUser, setBanModalUser] = useState(null);
   const [banReason, setBanReason] = useState("");
   const [banDuration, setBanDuration] = useState("permanent");
@@ -1457,17 +1617,14 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
   const [adminAddCardAmount, setAdminAddCardAmount] = useState(1);
   const [adminAddCoinsAmount, setAdminAddCoinsAmount] = useState(100);
 
-  // Стан форм
   const [editingCard, setEditingCard] = useState(null);
-  const [cardForm, setCardForm] = useState({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "" });
+  const [cardForm, setCardForm] = useState({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "" });
   const [editingPack, setEditingPack] = useState(null);
-  const [packForm, setPackForm] = useState({ id: "", name: "", cost: 50, image: "", customWeights: {} });
+  const [packForm, setPackForm] = useState({ id: "", name: "", cost: 50, image: "", customWeights: {}, isHidden: false });
 
-  // Промокоди
   const [allPromos, setAllPromos] = useState([]);
   const [promoForm, setPromoForm] = useState({ code: "", reward: 100, maxGlobalUses: 0, maxUserUses: 1 });
 
-  // Фільтри
   const [packSearchTerm, setPackSearchTerm] = useState("");
   const [cardSearchTerm, setCardSearchTerm] = useState("");
   const [cardPackFilter, setCardPackFilter] = useState("all");
@@ -1574,7 +1731,6 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
       }
   };
 
-  // --- Функції нарахування ---
   const giveCoinsToSelf = async (amount) => {
     try {
       const profileRef = doc(db, "artifacts", appId, "public", "data", "profiles", currentProfile.uid);
@@ -1651,13 +1807,13 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
     e.preventDefault();
     let updatedPacks = [...packsCatalog];
     if (editingPack) {
-      updatedPacks = updatedPacks.map((p) => p.id === editingPack.id ? { ...packForm, id: editingPack.id, cost: Number(packForm.cost) } : p);
+      updatedPacks = updatedPacks.map((p) => p.id === editingPack.id ? { ...packForm, id: editingPack.id, cost: Number(packForm.cost), isHidden: !!packForm.isHidden } : p);
     } else {
-      updatedPacks.push({ ...packForm, id: "p" + Date.now(), cost: Number(packForm.cost) });
+      updatedPacks.push({ ...packForm, id: "p" + Date.now(), cost: Number(packForm.cost), isHidden: !!packForm.isHidden });
     }
     await updateDoc(doc(db, "artifacts", appId, "public", "data", "gameSettings", "main"), { packs: updatedPacks });
     setEditingPack(null);
-    setPackForm({ id: "", name: "", cost: 50, image: "", customWeights: {} });
+    setPackForm({ id: "", name: "", cost: 50, image: "", customWeights: {}, isHidden: false });
     showToast("Паки оновлено!", "success");
   };
 
@@ -1671,6 +1827,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
   const saveCard = async (e) => {
     e.preventDefault();
     let updatedCatalog = [...cardsCatalog];
+    
     const newCardData = {
         id: editingCard ? editingCard.id : "c" + Date.now(),
         packId: cardForm.packId,
@@ -1680,16 +1837,20 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
         maxSupply: cardForm.maxSupply ? Number(cardForm.maxSupply) : 0,
         weight: cardForm.weight ? Number(cardForm.weight) : "",
         sellPrice: cardForm.sellPrice ? Number(cardForm.sellPrice) : SELL_PRICE,
+        effect: cardForm.effect || "",
         pulledCount: editingCard ? (editingCard.pulledCount || 0) : 0
     };
+
     if (editingCard) {
       updatedCatalog = updatedCatalog.map((c) => c.id === editingCard.id ? newCardData : c);
     } else {
       updatedCatalog.push(newCardData);
     }
+    
     await updateDoc(doc(db, "artifacts", appId, "public", "data", "gameSettings", "main"), { cards: updatedCatalog });
+    
     setEditingCard(null);
-    setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "" });
+    setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "" });
     showToast("Каталог оновлено!", "success");
   };
 
@@ -1830,13 +1991,15 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                     const c = cardsCatalog.find(cat => cat.id === invItem.id);
                     if (!c) return null;
                     const style = getCardStyle(c.rarity, rarities);
+                    const effectClass = c.effect ? `effect-${c.effect}` : '';
+
                     return (
-                      <div key={invItem.id} className={`bg-neutral-950 rounded-xl border-2 ${style.border} overflow-hidden flex flex-col items-center p-1 relative group`}>
+                      <div key={invItem.id} className={`bg-neutral-950 rounded-xl border-2 ${style.border} overflow-hidden flex flex-col items-center p-1 relative group ${effectClass}`}>
                         <img src={c.image} alt={c.name} className="w-full aspect-[2/3] object-cover rounded-lg mb-2 group-hover:opacity-40 transition-opacity" />
                         <div className="text-[10px] font-bold text-white truncate w-full text-center">{c.name}</div>
-                        <div className="text-xs font-black text-yellow-500 mb-1">x{invItem.amount}</div>
+                        <div className="text-xs font-black text-yellow-500 mb-1 z-10">x{invItem.amount}</div>
                         
-                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-20">
                             <button onClick={() => removeCardFromUser(invItem.id, invItem.amount)} className="bg-red-600 hover:bg-red-500 text-white p-2 rounded-full font-bold shadow-[0_0_15px_rgba(220,38,38,0.8)] transform hover:scale-110 transition-transform" title="Вилучити 1 шт.">
                                 <Trash2 size={18} />
                             </button>
@@ -1983,12 +2146,18 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                   ))}
                 </div>
               </div>
+              
+              <label className="flex items-center gap-2 text-white font-bold sm:col-span-2 cursor-pointer mt-2 bg-neutral-950 p-4 rounded-xl border border-neutral-800">
+                <input type="checkbox" checked={packForm.isHidden || false} onChange={e => setPackForm({...packForm, isHidden: e.target.checked})} className="w-5 h-5 accent-purple-600" />
+                Приховати пак від гравців (але не видаляти)
+              </label>
+
             </div>
             
             <div className="flex gap-3">
               <button type="submit" className="flex-1 bg-purple-600 text-white font-bold py-3 rounded-xl">Зберегти Пак</button>
               {editingPack && (
-                <button type="button" onClick={() => { setEditingPack(null); setPackForm({ id: "", name: "", cost: 50, image: "", customWeights: {} }); }} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
+                <button type="button" onClick={() => { setEditingPack(null); setPackForm({ id: "", name: "", cost: 50, image: "", customWeights: {}, isHidden: false }); }} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
               )}
             </div>
           </form>
@@ -2002,7 +2171,8 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             {filteredPacks.map((pack) => (
               <div key={pack.id} className="bg-neutral-900 rounded-xl p-4 border border-neutral-800 relative group">
-                <img src={pack.image} alt={pack.name} className="w-24 h-24 object-cover rounded-lg mx-auto mb-3" />
+                {pack.isHidden && <span className="text-[10px] bg-neutral-800 text-neutral-400 px-2 py-0.5 rounded border border-neutral-600 uppercase font-black tracking-widest absolute top-2 right-2 z-10">Приховано</span>}
+                <img src={pack.image} alt={pack.name} className={`w-24 h-24 object-cover rounded-lg mx-auto mb-3 ${pack.isHidden ? 'opacity-50 grayscale' : ''}`} />
                 <h4 className="text-center font-bold text-white mb-1">{pack.name}</h4>
                 <div className="text-center text-yellow-500 font-bold text-sm mb-4">{pack.cost} Монет</div>
                 <div className="flex gap-2">
@@ -2039,13 +2209,17 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                   <input type="number" step="0.01" placeholder="Індивід. Шанс (Вага)" value={cardForm.weight} onChange={(e) => setCardForm({ ...cardForm, weight: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white" title="Якщо заповнено - ігнорує глобальний шанс рідкості" />
                   <input type="number" placeholder="Ціна продажу (замовч. 15)" value={cardForm.sellPrice} onChange={(e) => setCardForm({ ...cardForm, sellPrice: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white text-green-400" title="Скільки монет отримає гравець за дублікат" />
                   
-                  <input type="text" placeholder="URL Картинки" value={cardForm.image} onChange={(e) => setCardForm({ ...cardForm, image: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white md:col-span-2" required />
+                  <select value={cardForm.effect} onChange={(e) => setCardForm({ ...cardForm, effect: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white md:col-span-2 text-purple-400 font-bold">
+                    {EFFECT_OPTIONS.map(opt => <option key={opt.id} value={opt.id}>{opt.name}</option>)}
+                  </select>
+
+                  <input type="text" placeholder="URL Картинки" value={cardForm.image} onChange={(e) => setCardForm({ ...cardForm, image: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white md:col-span-4" required />
               </div>
               
               <div className="flex gap-3">
                 <button type="submit" disabled={!cardForm.packId} className="flex-1 bg-purple-600 disabled:bg-neutral-700 text-white font-bold py-3 rounded-xl">Зберегти картку</button>
                 {editingCard && (
-                  <button type="button" onClick={() => { setEditingCard(null); setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "" }); }} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
+                  <button type="button" onClick={() => { setEditingCard(null); setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "" }); }} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
                 )}
               </div>
            </form>
@@ -2070,17 +2244,19 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
             {filteredCards.map((card) => {
               const packInfo = packsCatalog.find((p) => p.id === card.packId);
               const style = getCardStyle(card.rarity, rarities);
+              const effectClass = card.effect ? `effect-${card.effect}` : '';
+              
               return (
                 <div key={card.id} className={`bg-neutral-900 rounded-xl overflow-hidden border-2 ${style.border} group relative flex flex-col`}>
-                  <div className="aspect-[2/3] w-full relative shrink-0">
+                  <div className={`aspect-[2/3] w-full relative shrink-0 ${effectClass}`}>
                     <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
                     {card.maxSupply > 0 && (
-                      <div className="absolute top-1 left-1 bg-black/80 text-white text-[8px] px-1.5 py-0.5 rounded border border-neutral-700">
+                      <div className="absolute top-1 left-1 bg-black/80 text-white text-[8px] px-1.5 py-0.5 rounded border border-neutral-700 z-10">
                         {card.maxSupply - (card.pulledCount || 0)}/{card.maxSupply}
                       </div>
                     )}
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                      <button onClick={() => { setEditingCard(card); setCardForm({ ...card, maxSupply: card.maxSupply || "", weight: card.weight || "", sellPrice: card.sellPrice || "" }); }} className="p-2 bg-blue-600 rounded-lg text-white shadow-lg transform hover:scale-110 transition-transform">
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 z-20">
+                      <button onClick={() => { setEditingCard(card); setCardForm({ ...card, maxSupply: card.maxSupply || "", weight: card.weight || "", sellPrice: card.sellPrice || "", effect: card.effect || "" }); }} className="p-2 bg-blue-600 rounded-lg text-white shadow-lg transform hover:scale-110 transition-transform">
                         <Edit2 size={18} />
                       </button>
                       <button onClick={() => deleteCard(card.id)} className="p-2 bg-red-600 rounded-lg text-white shadow-lg transform hover:scale-110 transition-transform">
@@ -2096,7 +2272,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                         {packInfo ? packInfo.name : "Без паку!"}
                         </div>
                     </div>
-                    <div className="w-full flex justify-center gap-1 mt-1">
+                    <div className="w-full flex flex-wrap justify-center gap-1 mt-1">
                         {card.weight && (
                             <div className="text-[9px] text-yellow-500/80 font-bold bg-yellow-500/10 px-1.5 py-0.5 rounded border border-yellow-500/20" title="Індивідуальна вага">
                                 ⚖️ {card.weight}
@@ -2105,6 +2281,11 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                         <div className="text-[9px] text-green-400 font-bold bg-green-500/10 px-1.5 py-0.5 rounded border border-green-500/20" title="Ціна продажу дубліката">
                             +{card.sellPrice || SELL_PRICE} <Coins size={8} className="inline" />
                         </div>
+                        {card.effect && (
+                            <div className="text-[9px] text-purple-400 font-bold bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20 w-full mt-0.5 uppercase tracking-widest">
+                                {card.effect}
+                            </div>
+                        )}
                     </div>
                   </div>
                 </div>
@@ -2124,12 +2305,13 @@ function CardModal({ viewingCard, setViewingCard, rarities }) {
   if (!viewingCard) return null;
   const { card, amount } = viewingCard;
   const style = getCardStyle(card.rarity, rarities);
+  const effectClass = card.effect ? `effect-${card.effect}` : '';
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300" onClick={() => setViewingCard(null)}>
       <div className="relative flex flex-col items-center w-full max-w-sm animate-in zoom-in-95 slide-in-from-bottom-10 duration-500" onClick={(e) => e.stopPropagation()}>
         <button onClick={() => setViewingCard(null)} className="absolute -top-12 right-0 text-neutral-400 hover:text-white font-bold tracking-widest uppercase transition-colors">Закрити ✕</button>
-        <div className={`w-full aspect-[2/3] rounded-3xl border-4 overflow-hidden shadow-[0_20px_70px_rgba(0,0,0,0.8)] ${style.border} relative group`}>
+        <div className={`w-full aspect-[2/3] rounded-3xl border-4 overflow-hidden shadow-[0_20px_70px_rgba(0,0,0,0.8)] ${style.border} ${effectClass} relative group`}>
           <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
         </div>
         <div className="mt-8 flex flex-col items-center text-center w-full">
