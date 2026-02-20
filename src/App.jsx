@@ -26,7 +26,13 @@ import {
   Search,
   Filter,
   Zap,
-  Ticket
+  Ticket,
+  Store,
+  Tag,
+  History,
+  CalendarDays,
+  ShoppingCart,
+  Link
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
@@ -37,6 +43,9 @@ import {
   signOut,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup,
+  linkWithPopup
 } from "firebase/auth";
 import {
   getFirestore,
@@ -65,7 +74,13 @@ const isToday = (dateString) => {
          d.getFullYear() === today.getFullYear();
 };
 
-// --- CSS ДЛЯ КРУТИХ ЕФЕКТІВ КАРТОК ---
+const formatDate = (dateString) => {
+  if (!dateString) return "Невідомо";
+  const options = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+  return new Date(dateString).toLocaleDateString('uk-UA', options);
+};
+
+// --- CSS ДЛЯ КРУТИХ ЕФЕКТІВ КАРТОК ТА 3D ---
 const globalStyles = `
   .effect-holo::after {
     content: "";
@@ -132,6 +147,10 @@ const globalStyles = `
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
 `;
 
 // --- НАЛАШТУВАННЯ FIREBASE ---
@@ -162,24 +181,11 @@ const DEFAULT_PACKS = [
     image: "https://placehold.co/400x400/222/aaa?text=Базовий\nПак",
     customWeights: {},
     isHidden: false
-  },
-  {
-    id: "p2",
-    name: "Елітний Шинобі",
-    category: "Елітні",
-    cost: 100,
-    image: "https://placehold.co/400x400/581c87/fff?text=Елітний\nПак",
-    customWeights: {},
-    isHidden: false
-  },
+  }
 ];
 
 const DEFAULT_CARDS_DB = [
   { id: "c1", packId: "p1", name: "Учень Академії", rarity: "Звичайна", image: "https://placehold.co/400x600/222/aaa?text=Учень\nАкадемії", maxSupply: 0, pulledCount: 0, sellPrice: 15, effect: "" },
-  { id: "c2", packId: "p1", name: "Тренувальний манекен", rarity: "Звичайна", image: "https://placehold.co/400x600/222/aaa?text=Манекен", maxSupply: 0, pulledCount: 0, sellPrice: 15, effect: "" },
-  { id: "c4", packId: "p1", name: "Генін", rarity: "Рідкісна", image: "https://placehold.co/400x600/1e3a8a/ccc?text=Генін", maxSupply: 0, pulledCount: 0, sellPrice: 30, effect: "" },
-  { id: "c6", packId: "p2", name: "Елітний Джонін", rarity: "Епічна", image: "https://placehold.co/400x600/581c87/eee?text=Елітний\nДжонін", maxSupply: 500, pulledCount: 0, sellPrice: 100, effect: "holo" },
-  { id: "c8", packId: "p2", name: "Легендарний Хокаге", rarity: "Легендарна", image: "https://placehold.co/400x600/854d0e/fff?text=Легендарний\nХокаге", maxSupply: 10, pulledCount: 0, sellPrice: 500, effect: "glow" },
 ];
 
 const EFFECT_OPTIONS = [
@@ -219,6 +225,7 @@ export default function App() {
   const [user, setUser] = useState(undefined);
   const [profile, setProfile] = useState(null);
   const [dbInventory, setDbInventory] = useState([]);
+  const [marketListings, setMarketListings] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Авторизація
@@ -243,6 +250,7 @@ export default function App() {
   const [viewingCard, setViewingCard] = useState(null);
   const [viewingPlayerProfile, setViewingPlayerProfile] = useState(null);
   const [toastMsg, setToastMsg] = useState({ text: "", type: "" });
+  const [listingCard, setListingCard] = useState(null);
 
   const canClaimDaily = profile && !isToday(profile.lastDailyClaim);
 
@@ -310,7 +318,6 @@ export default function App() {
       if (docSnap.exists()) {
         const pData = docSnap.data();
         
-        // Автоматичне зняття тимчасового бану, якщо час вийшов
         if (pData.isBanned && pData.banUntil) {
           const now = new Date().getTime();
           const banEnd = new Date(pData.banUntil).getTime();
@@ -335,12 +342,31 @@ export default function App() {
       setDbInventory(items);
     });
 
+    const marketRef = collection(db, "artifacts", GAME_ID, "public", "data", "market");
+    const unsubMarket = onSnapshot(marketRef, (snapshot) => {
+      const listings = [];
+      snapshot.forEach((doc) => listings.push({ id: doc.id, ...doc.data() }));
+      // Сортуємо новіші зверху
+      setMarketListings(listings.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)));
+    });
+
     return () => {
       unsubSettings();
       unsubProfile();
       unsubInv();
+      unsubMarket();
     };
   }, [user]);
+
+  // АВТОМАТИЧНА СИНХРОНІЗАЦІЯ КІЛЬКОСТІ УНІКАЛЬНИХ КАРТОК (ДЛЯ РЕЙТИНГУ)
+  useEffect(() => {
+    if (user && profile && dbInventory) {
+      if (profile.uniqueCardsCount !== dbInventory.length) {
+        const profileRef = doc(db, "artifacts", GAME_ID, "public", "data", "profiles", user.uid);
+        updateDoc(profileRef, { uniqueCardsCount: dbInventory.length }).catch(e => console.error("Помилка синхронізації карток:", e));
+      }
+    }
+  }, [user, profile?.uniqueCardsCount, dbInventory.length]);
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
@@ -364,6 +390,7 @@ export default function App() {
           email,
           coins: 200,
           totalCards: 0,
+          uniqueCardsCount: 0,
           lastDailyClaim: null,
           dailyStreak: 0,
           createdAt: new Date().toISOString(),
@@ -385,6 +412,43 @@ export default function App() {
     setLoading(false);
   };
 
+  const handleGoogleAuth = async () => {
+    setLoading(true);
+    setDbError("");
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const googleUser = result.user;
+
+      // Перевіряємо чи є вже профіль в базі
+      const profileRef = doc(db, "artifacts", GAME_ID, "public", "data", "profiles", googleUser.uid);
+      const profileSnap = await getDoc(profileRef);
+
+      if (!profileSnap.exists()) {
+        await setDoc(profileRef, {
+          uid: googleUser.uid,
+          nickname: googleUser.displayName || "Гість",
+          email: googleUser.email || "",
+          coins: 200,
+          totalCards: 0,
+          uniqueCardsCount: 0,
+          lastDailyClaim: null,
+          dailyStreak: 0,
+          createdAt: new Date().toISOString(),
+          promoUsed: false,
+          isAdmin: false,
+          isSuperAdmin: false,
+          isBanned: false,
+        });
+      }
+    } catch (err) {
+      if (err.code !== "auth/popup-closed-by-user") {
+        setDbError("Помилка входу через Google: " + err.message);
+      }
+    }
+    setLoading(false);
+  };
+
   const handleLogout = async () => {
     setLoading(true);
     await signOut(auth);
@@ -397,6 +461,101 @@ export default function App() {
   const showToast = (msg, type = "error") => {
     setToastMsg({ text: msg, type });
     setTimeout(() => setToastMsg({ text: "", type: "" }), 3000);
+  };
+
+  // --- ЛОГІКА РИНКУ ТА ІНВЕНТАРЮ ---
+  const listOnMarket = async (cardId, price) => {
+      const existing = dbInventory.find((i) => i.id === cardId);
+      if (!existing || existing.amount < 1) return showToast("У вас немає цієї картки!");
+      if (price < 1 || !Number.isInteger(price)) return showToast("Невірна ціна!");
+
+      try {
+          const batch = writeBatch(db);
+          const invDocRef = doc(db, "artifacts", GAME_ID, "users", user.uid, "inventory", cardId);
+          
+          if (existing.amount === 1) {
+              batch.delete(invDocRef);
+          } else {
+              batch.update(invDocRef, { amount: increment(-1) });
+          }
+
+          const profileRef = doc(db, "artifacts", GAME_ID, "public", "data", "profiles", user.uid);
+          batch.update(profileRef, { totalCards: increment(-1) });
+
+          const marketRef = doc(db, "artifacts", GAME_ID, "public", "data", "market", "m_" + Date.now() + "_" + user.uid);
+          batch.set(marketRef, {
+              cardId,
+              sellerUid: user.uid,
+              sellerNickname: profile.nickname,
+              price: Number(price),
+              createdAt: new Date().toISOString(),
+              status: "active" // Додаємо статус для історії
+          });
+
+          await batch.commit();
+          showToast("Картку успішно виставлено на Ринок!", "success");
+          setListingCard(null);
+      } catch(e) {
+          console.error(e);
+          showToast(`Помилка: ${e.message}`);
+      }
+  };
+
+  const buyFromMarket = async (listing) => {
+      if (profile.coins < listing.price) return showToast("Недостатньо монет, Мій лорд!");
+      if (listing.sellerUid === user.uid) return showToast("Ви не можете купити власний лот!");
+
+      try {
+          const batch = writeBatch(db);
+          
+          const buyerProfileRef = doc(db, "artifacts", GAME_ID, "public", "data", "profiles", user.uid);
+          batch.update(buyerProfileRef, { coins: increment(-listing.price), totalCards: increment(1) });
+          
+          const buyerInvRef = doc(db, "artifacts", GAME_ID, "users", user.uid, "inventory", listing.cardId);
+          batch.set(buyerInvRef, { amount: increment(1) }, { merge: true });
+
+          const sellerProfileRef = doc(db, "artifacts", GAME_ID, "public", "data", "profiles", listing.sellerUid);
+          batch.update(sellerProfileRef, { coins: increment(listing.price) });
+
+          // ЗМІНА ДЛЯ ІСТОРІЇ: Замість видалення, змінюємо статус на "sold"
+          const marketRef = doc(db, "artifacts", GAME_ID, "public", "data", "market", listing.id);
+          batch.update(marketRef, {
+              status: "sold",
+              buyerUid: user.uid,
+              buyerNickname: profile.nickname,
+              soldAt: new Date().toISOString()
+          });
+
+          await batch.commit();
+          showToast(`Картку успішно придбано за ${listing.price} монет!`, "success");
+      } catch (e) {
+          console.error(e);
+          showToast("Помилка покупки. Можливо, лот вже продано іншому гравцю.");
+      }
+  };
+
+  const cancelMarketListing = async (listing) => {
+      if (listing.sellerUid !== user.uid && !profile.isAdmin) return;
+
+      try {
+          const batch = writeBatch(db);
+          
+          // При скасуванні повністю видаляємо з бази
+          const marketRef = doc(db, "artifacts", GAME_ID, "public", "data", "market", listing.id);
+          batch.delete(marketRef);
+
+          const sellerProfileRef = doc(db, "artifacts", GAME_ID, "public", "data", "profiles", listing.sellerUid);
+          batch.update(sellerProfileRef, { totalCards: increment(1) });
+
+          const sellerInvRef = doc(db, "artifacts", GAME_ID, "users", listing.sellerUid, "inventory", listing.cardId);
+          batch.set(sellerInvRef, { amount: increment(1) }, { merge: true });
+
+          await batch.commit();
+          showToast(listing.sellerUid === user.uid ? "Ваш лот знято з продажу." : "Лот гравця примусово видалено.", "success");
+      } catch (e) {
+          console.error(e);
+          showToast("Помилка скасування лоту.");
+      }
   };
 
   // --- ЛОГІКА ГРИ (ВІДКРИТТЯ ПАКУ) ---
@@ -418,6 +577,7 @@ export default function App() {
       let tempCatalog = JSON.parse(JSON.stringify(cardsCatalog));
       let results = [];
       let countsMap = {};
+      let needsCatalogUpdate = false; 
       const availablePackCards = tempCatalog.filter((c) => c.packId === packId);
 
       for (let i = 0; i < amountToOpen; i++) {
@@ -467,7 +627,10 @@ export default function App() {
 
         if (newCard.maxSupply > 0) {
           let catalogRef = tempCatalog.find(c => c.id === newCard.id);
-          if (catalogRef) catalogRef.pulledCount = (catalogRef.pulledCount || 0) + 1;
+          if (catalogRef) {
+              catalogRef.pulledCount = (catalogRef.pulledCount || 0) + 1;
+              needsCatalogUpdate = true;
+          }
         }
 
         results.push(newCard);
@@ -488,8 +651,10 @@ export default function App() {
           totalCards: increment(results.length)
         });
 
-        const settingsRef = doc(db, "artifacts", GAME_ID, "public", "data", "gameSettings", "main");
-        batch.update(settingsRef, { cards: tempCatalog });
+        if (needsCatalogUpdate) {
+            const settingsRef = doc(db, "artifacts", GAME_ID, "public", "data", "gameSettings", "main");
+            batch.update(settingsRef, { cards: tempCatalog });
+        }
 
         for (const [cardId, count] of Object.entries(countsMap)) {
           const invDocRef = doc(db, "artifacts", GAME_ID, "users", user.uid, "inventory", cardId);
@@ -517,7 +682,7 @@ export default function App() {
 
       } catch (err) {
         console.error("Помилка під час відкриття:", err);
-        showToast("Виникла помилка під час збереження карток.");
+        showToast(`Виникла помилка під час збереження: ${err.message}`);
         setOpeningPackId(null);
       }
     }, amountToOpen === 1 ? 100 : 1500);
@@ -742,6 +907,19 @@ export default function App() {
               {authMode === "login" ? "Увійти в гру" : "Створити акаунт"}
             </button>
           </form>
+
+          <div className="mt-4">
+              <button onClick={handleGoogleAuth} type="button" className="w-full bg-white text-neutral-900 hover:bg-gray-100 font-bold py-4 px-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24">
+                      <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                  </svg>
+                  Увійти через Google
+              </button>
+          </div>
+
           <div className="mt-8 pt-6 border-t border-neutral-800 text-center">
             <button
               onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setDbError(""); }}
@@ -756,7 +934,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans pb-24 relative">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans pb-24 relative overflow-x-hidden">
       <style>{globalStyles}</style>
       
       <header className="bg-neutral-900 border-b border-neutral-800 sticky top-0 z-50 shadow-sm">
@@ -801,7 +979,7 @@ export default function App() {
       </header>
 
       {toastMsg.text && (
-        <div className={`fixed top-20 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full flex items-center gap-2 shadow-lg z-50 animate-bounce text-white font-medium ${
+        <div className={`fixed top-20 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full flex items-center gap-2 shadow-lg z-50 animate-bounce text-white font-medium whitespace-nowrap ${
             toastMsg.type === "success" ? "bg-green-600/90" : "bg-red-900/90"
           }`}
         >
@@ -838,6 +1016,19 @@ export default function App() {
             sellPrice={SELL_PRICE}
             catalogTotal={cardsCatalog.length}
             setViewingCard={setViewingCard}
+            setListingCard={setListingCard}
+          />
+        )}
+        {currentView === "market" && (
+          <MarketView
+            marketListings={marketListings}
+            cardsCatalog={cardsCatalog}
+            rarities={rarities}
+            currentUserUid={user.uid}
+            buyFromMarket={buyFromMarket}
+            cancelMarketListing={cancelMarketListing}
+            setViewingCard={setViewingCard}
+            isAdmin={profile?.isAdmin}
           />
         )}
         {currentView === "profile" && (
@@ -850,6 +1041,9 @@ export default function App() {
             showToast={showToast}
             inventoryCount={fullInventory.length}
             canClaimDaily={canClaimDaily}
+            marketListings={marketListings}
+            cardsCatalog={cardsCatalog}
+            rarities={rarities}
           />
         )}
         {currentView === "rating" && (
@@ -884,26 +1078,33 @@ export default function App() {
         )}
       </main>
 
+      {/* Модалка для великого перегляду картки з 3D ефектом */}
       {viewingCard && (
         <CardModal viewingCard={viewingCard} setViewingCard={setViewingCard} rarities={rarities} />
       )}
 
-      <nav className="fixed bottom-0 w-full bg-neutral-900 border-t border-neutral-800 px-4 py-2 z-40 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
-        <div className="max-w-md mx-auto flex justify-around relative">
-          <NavButton icon={<PackageOpen size={24} />} label="Магазин" isActive={currentView === "shop"} onClick={() => { setCurrentView("shop"); setPulledCards([]); setSelectedPackId(null); }} />
-          <NavButton icon={<LayoutGrid size={24} />} label="Інвентар" isActive={currentView === "inventory"} onClick={() => setCurrentView("inventory")} />
-          <NavButton icon={<Trophy size={24} />} label="Рейтинг" isActive={currentView === "rating" || currentView === "publicProfile"} onClick={() => setCurrentView("rating")} />
-          <NavButton icon={<User size={24} />} label="Профіль" isActive={currentView === "profile"} onClick={() => setCurrentView("profile")} />
+      {/* Модалка для виставлення картки на Ринок */}
+      {listingCard && (
+         <ListingModal listingCard={listingCard} setListingCard={setListingCard} listOnMarket={listOnMarket} />
+      )}
+
+      <nav className="fixed bottom-0 w-full bg-neutral-900 border-t border-neutral-800 px-2 py-2 z-40 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] overflow-x-auto hide-scrollbar">
+        <div className="min-w-max mx-auto flex justify-center sm:gap-2">
+          <NavButton icon={<PackageOpen size={22} />} label="Магазин" isActive={currentView === "shop"} onClick={() => { setCurrentView("shop"); setPulledCards([]); setSelectedPackId(null); }} />
+          <NavButton icon={<LayoutGrid size={22} />} label="Інвентар" isActive={currentView === "inventory"} onClick={() => setCurrentView("inventory")} />
+          <NavButton icon={<Store size={22} />} label="Ринок" isActive={currentView === "market"} onClick={() => setCurrentView("market")} />
+          <NavButton icon={<Trophy size={22} />} label="Рейтинг" isActive={currentView === "rating" || currentView === "publicProfile"} onClick={() => setCurrentView("rating")} />
+          <NavButton icon={<User size={22} />} label="Профіль" isActive={currentView === "profile"} onClick={() => setCurrentView("profile")} />
           
           {profile?.isAdmin && (
             <button
               onClick={() => setCurrentView("admin")}
-              className={`flex flex-col items-center p-2 rounded-lg w-20 transition-colors ${
+              className={`flex flex-col items-center p-2 rounded-lg w-16 sm:w-20 transition-colors ${
                 currentView === "admin" ? "text-purple-500" : "text-neutral-500 hover:text-neutral-300"
               }`}
             >
-              <Shield size={24} />
-              <span className="text-[10px] mt-1 font-bold uppercase tracking-wider">Адмінка</span>
+              <Shield size={22} />
+              <span className="text-[9px] sm:text-[10px] mt-1 font-bold uppercase tracking-wider">Адмінка</span>
             </button>
           )}
         </div>
@@ -919,6 +1120,126 @@ function NavButton({ icon, label, isActive, onClick }) {
       <span className="text-[9px] sm:text-[10px] mt-1 font-bold uppercase tracking-wider">{label}</span>
     </button>
   );
+}
+
+// --- РИНОК ГРАВЦІВ ---
+function MarketView({ marketListings, cardsCatalog, rarities, currentUserUid, buyFromMarket, cancelMarketListing, setViewingCard, isAdmin }) {
+  const [tab, setTab] = useState("all");
+
+  // Фільтруємо ТІЛЬКИ активні лоти (статус 'active' або взагалі без статусу для сумісності зі старими)
+  const activeListings = marketListings.filter(l => (!l.status || l.status === "active") && (tab === "my" ? l.sellerUid === currentUserUid : true));
+
+  return (
+     <div className="pb-10 animate-in fade-in zoom-in-95 duration-500">
+        <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
+           <div className="text-center sm:text-left">
+              <h2 className="text-3xl font-black text-white uppercase tracking-widest flex items-center justify-center sm:justify-start gap-3">
+                 <Store className="text-blue-500 w-8 h-8" /> Ринок Карток
+              </h2>
+              <p className="text-neutral-400 text-sm">Купуйте рідкісні лоти в інших гравців!</p>
+           </div>
+           
+           <div className="flex bg-neutral-900 border border-neutral-800 rounded-xl p-1 w-full sm:w-auto">
+              <button onClick={() => setTab("all")} className={`flex-1 sm:px-6 py-2 rounded-lg font-bold text-sm transition-colors ${tab === "all" ? "bg-blue-600 text-white" : "text-neutral-400 hover:text-white"}`}>
+                 Всі лоти
+              </button>
+              <button onClick={() => setTab("my")} className={`flex-1 sm:px-6 py-2 rounded-lg font-bold text-sm transition-colors ${tab === "my" ? "bg-blue-600 text-white" : "text-neutral-400 hover:text-white"}`}>
+                 Мої продажі
+              </button>
+           </div>
+        </div>
+
+        {activeListings.length === 0 ? (
+           <div className="text-center py-20 bg-neutral-900/30 rounded-3xl border-2 border-dashed border-neutral-800">
+             <Tag size={60} className="mx-auto mb-4 text-neutral-600 opacity-50" />
+             <p className="text-lg font-bold text-neutral-400">Активних лотів не знайдено.</p>
+             {tab === "my" && <p className="text-sm text-neutral-500 mt-2">Перейдіть в Інвентар, щоб виставити картку на продаж.</p>}
+           </div>
+        ) : (
+           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+              {activeListings.map(listing => {
+                 const card = cardsCatalog.find(c => c.id === listing.cardId);
+                 if (!card) return null;
+                 const style = getCardStyle(card.rarity, rarities);
+                 const effectClass = card.effect ? `effect-${card.effect}` : '';
+                 const isMine = listing.sellerUid === currentUserUid;
+
+                 return (
+                    <div key={listing.id} className="flex flex-col items-center animate-in zoom-in-95 group">
+                        <div onClick={() => setViewingCard({ card })} className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-3 cursor-pointer transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-[0_15px_30px_rgba(0,0,0,0.6)] ${style.border} ${effectClass}`}>
+                            <img src={card.image} alt={card.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                        </div>
+                        
+                        <div className="w-full px-1 text-center flex flex-col items-center">
+                            <div className="font-bold text-xs text-white truncate w-full mb-1">{card.name}</div>
+                            <div className="text-[10px] text-neutral-500 mb-2 truncate w-full flex items-center justify-center gap-1">
+                               <User size={10} /> {listing.sellerNickname}
+                            </div>
+                            
+                            {isMine ? (
+                               <button onClick={() => cancelMarketListing(listing)} className="w-full bg-red-900/50 hover:bg-red-600 text-red-200 hover:text-white text-xs font-bold py-2 rounded-lg transition-colors border border-red-800">
+                                   Зняти з продажу
+                               </button>
+                            ) : (
+                               <div className="w-full flex gap-1">
+                                   <button onClick={() => buyFromMarket(listing)} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 rounded-lg transition-colors shadow-lg shadow-blue-900/20 flex justify-center items-center gap-1">
+                                       Купити ({listing.price} <Coins size={10}/>)
+                                   </button>
+                                   {isAdmin && (
+                                       <button onClick={() => cancelMarketListing(listing)} className="bg-red-900 text-red-400 hover:bg-red-600 hover:text-white p-2 rounded-lg" title="Примусово видалити лот (Адмін)">
+                                          <Trash2 size={14} />
+                                       </button>
+                                   )}
+                               </div>
+                            )}
+                        </div>
+                    </div>
+                 );
+              })}
+           </div>
+        )}
+     </div>
+  );
+}
+
+// --- МОДАЛКА ВИСТАВЛЕННЯ НА РИНОК ---
+function ListingModal({ listingCard, setListingCard, listOnMarket }) {
+    const [price, setPrice] = useState("");
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        listOnMarket(listingCard.id, Number(price));
+    };
+
+    return (
+       <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in" onClick={() => setListingCard(null)}>
+           <div className="bg-neutral-900 border border-blue-900/50 p-6 rounded-3xl shadow-[0_0_50px_rgba(37,99,235,0.2)] max-w-sm w-full animate-in zoom-in-95 relative" onClick={e => e.stopPropagation()}>
+               <div className="flex items-center gap-3 mb-6 border-b border-neutral-800 pb-4">
+                   <div className="w-16 h-24 rounded-lg overflow-hidden border border-neutral-700 shrink-0">
+                       <img src={listingCard.image} alt={listingCard.name} className="w-full h-full object-cover" />
+                   </div>
+                   <div>
+                       <h3 className="text-lg font-black text-white leading-tight">{listingCard.name}</h3>
+                       <div className="text-xs text-neutral-400 mt-1">Виставлення на Ринок</div>
+                   </div>
+               </div>
+
+               <form onSubmit={handleSubmit} className="space-y-4">
+                   <div>
+                       <label className="text-xs font-bold text-neutral-400 uppercase mb-2 block">Ваша ціна (Монети):</label>
+                       <div className="relative">
+                           <Coins className="absolute left-4 top-1/2 -translate-y-1/2 text-yellow-500 w-5 h-5" />
+                           <input type="number" min="1" value={price} onChange={e => setPrice(e.target.value)} placeholder="Наприклад: 1000" required className="w-full bg-neutral-950 border border-neutral-700 rounded-xl pl-12 pr-4 py-4 text-white focus:border-blue-500 outline-none text-lg font-bold" />
+                       </div>
+                   </div>
+                   <div className="flex gap-3 pt-2">
+                       <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-xl transition-colors shadow-lg shadow-blue-900/20">Продати</button>
+                       <button type="button" onClick={() => setListingCard(null)} className="bg-neutral-800 hover:bg-neutral-700 text-white font-bold py-4 px-6 rounded-xl transition-colors">Скасувати</button>
+                   </div>
+               </form>
+           </div>
+       </div>
+    );
 }
 
 // --- МАГАЗИН ---
@@ -1167,7 +1488,7 @@ function OpenButton({ amount, cost, onClick, opening, color = "bg-yellow-500 hov
 }
 
 // --- ІНВЕНТАР ---
-function InventoryView({ inventory, rarities, sellDuplicate, sellAllDuplicates, sellEveryDuplicate, sellPrice, catalogTotal, setViewingCard }) {
+function InventoryView({ inventory, rarities, sellDuplicate, sellAllDuplicates, sellEveryDuplicate, sellPrice, catalogTotal, setViewingCard, setListingCard }) {
   const [sortBy, setSortBy] = useState("rarity");
 
   const sortedInventory = [...inventory].sort((a, b) => {
@@ -1233,8 +1554,8 @@ function InventoryView({ inventory, rarities, sellDuplicate, sellAllDuplicates, 
             const currentSellPrice = item.card.sellPrice ? Number(item.card.sellPrice) : sellPrice;
 
             return (
-              <div key={item.card.id} className="flex flex-col items-center group cursor-pointer animate-in fade-in zoom-in-95 duration-500" style={{ animationDelay: `${index * 20}ms`, fillMode: "backwards" }} onClick={() => setViewingCard({ card: item.card, amount: item.amount })}>
-                <div className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-3 transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-[0_15px_30px_rgba(0,0,0,0.6)] ${style.border} ${effectClass}`}>
+              <div key={item.card.id} className="flex flex-col items-center group cursor-pointer animate-in fade-in zoom-in-95 duration-500" style={{ animationDelay: `${index * 20}ms`, fillMode: "backwards" }}>
+                <div onClick={() => setViewingCard({ card: item.card, amount: item.amount })} className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-3 transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-[0_15px_30px_rgba(0,0,0,0.6)] ${style.border} ${effectClass}`}>
                   {item.amount > 1 && (
                     <div className="absolute top-2 right-2 bg-neutral-950/90 backdrop-blur text-white font-black text-xs px-3 py-1.5 rounded-full z-10 border border-neutral-700 shadow-xl">
                       x{item.amount}
@@ -1249,17 +1570,27 @@ function InventoryView({ inventory, rarities, sellDuplicate, sellAllDuplicates, 
                   {item.amount > 1 ? (
                     <div className="w-full flex flex-col gap-1.5">
                       <button onClick={(e) => { e.stopPropagation(); sellDuplicate(item.card.id); }} className="w-full bg-neutral-800 hover:bg-neutral-700 text-xs py-2 rounded-lg text-neutral-200 font-bold transition-all hover:shadow-[0_0_15px_rgba(255,255,255,0.1)]">
-                        Продати 1 шт. (+{currentSellPrice} <Coins size={10} className="inline text-yellow-500" />)
+                        Продати (+{currentSellPrice} <Coins size={10} className="inline text-yellow-500" />)
                       </button>
-                      {item.amount > 2 && (
-                        <button onClick={(e) => { e.stopPropagation(); sellAllDuplicates(item.card.id, item.amount); }} className="w-full bg-neutral-800/80 hover:bg-red-900/50 text-[10px] py-1.5 rounded-lg text-neutral-400 font-bold transition-all border border-neutral-700 hover:border-red-900/50">
-                          Залишити одну (+{(item.amount - 1) * currentSellPrice} <Coins size={10} className="inline text-yellow-500" />)
-                        </button>
-                      )}
+                      <div className="flex gap-1.5 w-full">
+                         {item.amount > 2 && (
+                            <button onClick={(e) => { e.stopPropagation(); sellAllDuplicates(item.card.id, item.amount); }} className="flex-1 bg-neutral-800/80 hover:bg-red-900/50 text-[10px] py-1.5 rounded-lg text-neutral-400 font-bold transition-all border border-neutral-700 hover:border-red-900/50" title="Залишити лише 1">
+                               Всі (-1)
+                            </button>
+                         )}
+                         <button onClick={(e) => { e.stopPropagation(); setListingCard(item.card); }} className="flex-1 bg-blue-900/40 hover:bg-blue-600 text-[10px] py-1.5 rounded-lg text-blue-400 hover:text-white font-bold transition-all border border-blue-800/50">
+                            На Ринок
+                         </button>
+                      </div>
                     </div>
                   ) : (
-                    <div className="w-full flex justify-center items-center text-xs py-2.5 text-neutral-600 bg-neutral-950/50 rounded-lg border border-neutral-800 font-medium">
-                        Один екземпляр ({currentSellPrice} <Coins size={12} className="inline ml-1 opacity-50" />)
+                    <div className="w-full flex flex-col gap-1.5">
+                        <div className="w-full text-xs py-1.5 text-neutral-500 font-medium">
+                            Один екземпляр
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); setListingCard(item.card); }} className="w-full bg-blue-900/40 hover:bg-blue-600 text-xs py-2 rounded-lg text-blue-400 hover:text-white font-bold transition-all border border-blue-800/50">
+                            Виставити на Ринок
+                        </button>
                     </div>
                   )}
                 </div>
@@ -1277,6 +1608,7 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
   const [allProfiles, setAllProfiles] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
+  const [ratingSort, setRatingSort] = useState("cards"); // "cards" або "coins"
 
   useEffect(() => {
     const fetchAllProfiles = async () => {
@@ -1284,8 +1616,6 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
         const querySnapshot = await getDocs(collection(db, "artifacts", appId, "public", "data", "profiles"));
         const list = [];
         querySnapshot.forEach((doc) => list.push(doc.data()));
-        
-        list.sort((a, b) => (b.totalCards || 0) - (a.totalCards || 0));
         setAllProfiles(list);
       } catch (e) {
         console.error("Помилка завантаження бази гравців", e);
@@ -1295,9 +1625,14 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
     fetchAllProfiles();
   }, [db, appId]);
 
+  const sortedProfiles = [...allProfiles].sort((a, b) => {
+      if (ratingSort === "coins") return (b.coins || 0) - (a.coins || 0);
+      return (b.uniqueCardsCount || 0) - (a.uniqueCardsCount || 0);
+  });
+
   const filteredLeaders = searchTerm.trim() === "" 
-    ? allProfiles.slice(0, 50)
-    : allProfiles.filter(p => p.nickname?.toLowerCase().includes(searchTerm.toLowerCase()));
+    ? sortedProfiles.slice(0, 50)
+    : sortedProfiles.filter(p => p.nickname?.toLowerCase().includes(searchTerm.toLowerCase()));
 
   if (loading) return <div className="text-center py-20 text-neutral-500"><Loader2 className="animate-spin mx-auto mb-4 w-12 h-12"/> Завантаження Залу Слави...</div>;
 
@@ -1308,7 +1643,7 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
         <h2 className="text-3xl font-black text-white uppercase tracking-widest">Зал Слави</h2>
         <p className="text-neutral-400 text-sm mt-2 mb-6">Знайдіть гравців або змагайтеся за першість</p>
         
-        <div className="relative max-w-md mx-auto">
+        <div className="relative max-w-md mx-auto mb-4">
           <input
             type="text"
             placeholder="Пошук гравця за нікнеймом..."
@@ -1317,11 +1652,20 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
             className="w-full bg-neutral-900 border border-neutral-700 rounded-2xl py-3 px-5 text-white focus:outline-none focus:border-yellow-500 transition-colors shadow-inner"
           />
         </div>
+
+        <div className="flex bg-neutral-900 border border-neutral-800 rounded-xl p-1 max-w-md mx-auto">
+           <button onClick={() => setRatingSort("cards")} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors flex items-center justify-center gap-2 ${ratingSort === "cards" ? "bg-blue-600 text-white" : "text-neutral-400 hover:text-white"}`}>
+              <LayoutGrid size={16}/> За Колекцією
+           </button>
+           <button onClick={() => setRatingSort("coins")} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors flex items-center justify-center gap-2 ${ratingSort === "coins" ? "bg-yellow-600 text-white" : "text-neutral-400 hover:text-white"}`}>
+              <Coins size={16}/> За Монетами
+           </button>
+        </div>
       </div>
 
       <div className="bg-neutral-900 border border-neutral-800 rounded-3xl overflow-hidden shadow-xl">
         {filteredLeaders.map((leader, index) => {
-          const realRank = allProfiles.findIndex(p => p.uid === leader.uid) + 1;
+          const realRank = sortedProfiles.findIndex(p => p.uid === leader.uid) + 1;
 
           return (
             <div 
@@ -1350,8 +1694,10 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
               </div>
               <div className="flex items-center gap-4">
                 <div className="text-right">
-                  <div className="text-xs text-neutral-500 font-bold uppercase">Картки</div>
-                  <div className="text-xl font-black text-blue-400">{leader.totalCards || 0}</div>
+                  <div className="text-xs text-neutral-500 font-bold uppercase">{ratingSort === "cards" ? "Унікальні карти" : "Монети"}</div>
+                  <div className={`text-xl font-black ${ratingSort === "cards" ? "text-blue-400" : "text-yellow-500"}`}>
+                      {ratingSort === "cards" ? (leader.uniqueCardsCount || 0) : (leader.coins || 0)}
+                  </div>
                 </div>
                 <ArrowLeft size={16} className="text-neutral-600 group-hover:text-yellow-500 transform rotate-180 transition-colors" />
               </div>
@@ -1424,7 +1770,9 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
             {playerInfo.nickname}
             {playerInfo.isBanned && <span className="text-[10px] bg-red-900/50 text-red-400 px-2 py-1 rounded-full uppercase tracking-widest border border-red-800">Бан</span>}
         </h2>
-        <div className="text-neutral-500 text-sm">Колекціонер</div>
+        <div className="text-neutral-500 text-sm flex justify-center gap-4 mt-2">
+            <span className="flex items-center gap-1"><CalendarDays size={14}/> З нами від: {formatDate(playerInfo.createdAt)}</span>
+        </div>
         
         <div className="grid grid-cols-2 gap-4 relative z-10 mt-6 max-w-md mx-auto">
           <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
@@ -1434,8 +1782,8 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
           </div>
           <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
             <LayoutGrid className="text-blue-500 mb-2 w-6 h-6" />
-            <span className="text-xl font-black text-white">{playerInfo.totalCards || 0}</span>
-            <span className="text-[10px] text-neutral-500 font-bold uppercase mt-1">Всього карт</span>
+            <span className="text-xl font-black text-white">{playerInfo.uniqueCardsCount || playerInventory.length}</span>
+            <span className="text-[10px] text-neutral-500 font-bold uppercase mt-1">Унікальних карт</span>
           </div>
         </div>
       </div>
@@ -1482,9 +1830,27 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
 }
 
 // --- ПРОФІЛЬ ---
-function ProfileView({ profile, user, db, appId, handleLogout, showToast, canClaimDaily }) {
+function ProfileView({ profile, user, db, appId, handleLogout, showToast, canClaimDaily, marketListings, cardsCatalog, rarities }) {
   const [promoInput, setPromoInput] = useState("");
+  const [activeTab, setActiveTab] = useState("main"); // "main" або "history"
   
+  // Перевірка чи прив'язаний Google
+  const isGoogleLinked = user?.providerData?.some(p => p.providerId === 'google.com');
+
+  const handleLinkGoogle = async () => {
+     try {
+        const provider = new GoogleAuthProvider();
+        await linkWithPopup(user, provider);
+        showToast("Google акаунт успішно прив'язано!", "success");
+     } catch (e) {
+        if (e.code === 'auth/credential-already-in-use') {
+            showToast("Цей Google акаунт вже прив'язаний до іншого профілю.", "error");
+        } else if (e.code !== "auth/popup-closed-by-user") {
+            showToast("Помилка прив'язки: " + e.message, "error");
+        }
+     }
+  };
+
   const handlePromoSubmit = async (e) => {
     e.preventDefault();
     const code = promoInput.trim().toUpperCase();
@@ -1587,63 +1953,182 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
   const currentStreak = profile?.dailyStreak || 0;
   const nextStreakDay = currentStreak >= 7 ? 1 : currentStreak + 1;
 
+  // Збираємо і покупки, і продажі
+  const historyItems = marketListings.filter(l => 
+     l.status === "sold" && 
+     ((l.sellerUid === user.uid && !l.sellerHidden) || (l.buyerUid === user.uid && !l.buyerHidden))
+  ).sort((a, b) => new Date(b.soldAt) - new Date(a.soldAt));
+
+  const handleClearHistory = async () => {
+      if (historyItems.length === 0) return;
+      if (!confirm("Очистити історію? Це приховає записи назавжди.")) return;
+
+      try {
+          const batch = writeBatch(db);
+          
+          historyItems.forEach(l => {
+              const ref = doc(db, "artifacts", appId, "public", "data", "market", l.id);
+              const isSeller = l.sellerUid === user.uid;
+              const isBuyer = l.buyerUid === user.uid;
+
+              const willSellerBeHidden = isSeller ? true : l.sellerHidden;
+              const willBuyerBeHidden = isBuyer ? true : l.buyerHidden;
+
+              // Якщо обидва учасники угоди приховали запис — видаляємо його з БД повністю для економії місця
+              if (willSellerBeHidden && willBuyerBeHidden) {
+                  batch.delete(ref);
+              } else {
+                  if (isSeller) batch.update(ref, { sellerHidden: true });
+                  if (isBuyer) batch.update(ref, { buyerHidden: true });
+              }
+          });
+
+          await batch.commit();
+          showToast("Історію очищено!", "success");
+      } catch(e) {
+          console.error(e);
+          showToast("Помилка під час очищення історії.", "error");
+      }
+  };
+
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 text-center relative overflow-hidden">
-        <div className={`absolute top-0 left-0 w-full h-32 bg-gradient-to-b ${profile?.isSuperAdmin ? "from-red-900/40" : profile?.isAdmin ? "from-purple-900/40" : "from-yellow-900/20"} to-transparent`}></div>
-        <div className={`w-24 h-24 bg-neutral-800 rounded-full flex items-center justify-center font-black text-4xl border-4 shadow-xl mx-auto relative z-10 mb-4 ${profile?.isSuperAdmin ? "text-red-400 border-red-500" : profile?.isAdmin ? "text-purple-400 border-purple-500" : "text-yellow-500 border-neutral-700"}`}>
-          {profile?.isSuperAdmin ? <Crown size={48} /> : profile?.isAdmin ? <Shield size={48} /> : profile?.nickname?.charAt(0).toUpperCase()}
-        </div>
-        <h2 className="text-3xl font-black text-white mb-1 relative z-10">{profile?.nickname}</h2>
-        <div className="text-neutral-500 text-sm mb-6">ID: {profile?.uid?.substring(0,8)}...</div>
-        
-        <div className="grid grid-cols-2 gap-4 relative z-10 mt-4">
-          <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
-            <Coins className="text-yellow-500 mb-2 w-8 h-8" />
-            <span className="text-2xl font-black text-white">{profile?.coins}</span>
-            <span className="text-xs text-neutral-500 font-bold uppercase mt-1">Монети</span>
-          </div>
-          <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
-            <LayoutGrid className="text-blue-500 mb-2 w-8 h-8" />
-            <span className="text-2xl font-black text-white">{profile?.totalCards || 0}</span>
-            <span className="text-xs text-neutral-500 font-bold uppercase mt-1">Всього карт</span>
-          </div>
-        </div>
+    <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in duration-500">
+      
+      <div className="flex bg-neutral-900 border border-neutral-800 rounded-xl p-1 max-w-sm mx-auto mb-6">
+         <button onClick={() => setActiveTab("main")} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors flex items-center justify-center gap-2 ${activeTab === "main" ? "bg-blue-600 text-white" : "text-neutral-400 hover:text-white"}`}>
+            <User size={16}/> Головна
+         </button>
+         <button onClick={() => setActiveTab("history")} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors flex items-center justify-center gap-2 ${activeTab === "history" ? "bg-blue-600 text-white" : "text-neutral-400 hover:text-white"}`}>
+            <History size={16}/> Історія Ринку
+         </button>
       </div>
 
-      {canClaimDaily ? (
-        <div className="bg-gradient-to-r from-yellow-600 to-orange-500 rounded-3xl p-6 text-center shadow-[0_0_30px_rgba(217,119,6,0.3)] relative overflow-hidden mb-6">
-            <div className="relative z-10 flex flex-col items-center">
-               <Gift size={40} className="text-yellow-100 mb-2 animate-bounce" />
-               <h3 className="text-xl font-black text-white uppercase tracking-widest mb-1">Щоденна Нагорода</h3>
-               <p className="text-yellow-100 font-bold mb-4">День {nextStreakDay}/7 - Отримайте {nextStreakDay * 1000} монет!</p>
-               <button onClick={handleDailyClaim} className="bg-white text-orange-600 font-black py-3 px-8 rounded-xl hover:scale-105 transition-transform shadow-xl">
-                   Забрати зараз!
-               </button>
+      {activeTab === "main" ? (
+         <>
+            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 text-center relative overflow-hidden">
+              <div className={`absolute top-0 left-0 w-full h-32 bg-gradient-to-b ${profile?.isSuperAdmin ? "from-red-900/40" : profile?.isAdmin ? "from-purple-900/40" : "from-yellow-900/20"} to-transparent`}></div>
+              <div className={`w-24 h-24 bg-neutral-800 rounded-full flex items-center justify-center font-black text-4xl border-4 shadow-xl mx-auto relative z-10 mb-4 ${profile?.isSuperAdmin ? "text-red-400 border-red-500" : profile?.isAdmin ? "text-purple-400 border-purple-500" : "text-yellow-500 border-neutral-700"}`}>
+                {profile?.isSuperAdmin ? <Crown size={48} /> : profile?.isAdmin ? <Shield size={48} /> : profile?.nickname?.charAt(0).toUpperCase()}
+              </div>
+              <h2 className="text-3xl font-black text-white mb-1 relative z-10">{profile?.nickname}</h2>
+              <div className="text-neutral-500 text-sm mb-2">ID: {profile?.uid?.substring(0,8)}...</div>
+              
+              <div className="flex items-center justify-center gap-2 text-xs text-neutral-400 mb-6 bg-neutral-950 inline-flex px-3 py-1.5 rounded-full border border-neutral-800">
+                 <CalendarDays size={14} className="text-blue-500"/>
+                 Акаунт створено: <span className="text-white font-bold">{formatDate(profile?.createdAt)}</span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 relative z-10">
+                <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
+                  <Coins className="text-yellow-500 mb-2 w-8 h-8" />
+                  <span className="text-2xl font-black text-white">{profile?.coins}</span>
+                  <span className="text-xs text-neutral-500 font-bold uppercase mt-1">Монети</span>
+                </div>
+                <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
+                  <LayoutGrid className="text-blue-500 mb-2 w-8 h-8" />
+                  <span className="text-2xl font-black text-white">{profile?.uniqueCardsCount || 0}</span>
+                  <span className="text-xs text-neutral-500 font-bold uppercase mt-1">Унікальних карт</span>
+                </div>
+              </div>
             </div>
-        </div>
+
+            {canClaimDaily ? (
+              <div className="bg-gradient-to-r from-yellow-600 to-orange-500 rounded-3xl p-6 text-center shadow-[0_0_30px_rgba(217,119,6,0.3)] relative overflow-hidden mb-6">
+                  <div className="relative z-10 flex flex-col items-center">
+                     <Gift size={40} className="text-yellow-100 mb-2 animate-bounce" />
+                     <h3 className="text-xl font-black text-white uppercase tracking-widest mb-1">Щоденна Нагорода</h3>
+                     <p className="text-yellow-100 font-bold mb-4">День {nextStreakDay}/7 - Отримайте {nextStreakDay * 1000} монет!</p>
+                     <button onClick={handleDailyClaim} className="bg-white text-orange-600 font-black py-3 px-8 rounded-xl hover:scale-105 transition-transform shadow-xl">
+                         Забрати зараз!
+                     </button>
+                  </div>
+              </div>
+            ) : (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 text-center mb-6">
+                  <CheckCircle2 size={32} className="text-neutral-500 mx-auto mb-2" />
+                  <h3 className="text-neutral-400 font-bold">Нагороду вже забрано</h3>
+                  <p className="text-xs text-neutral-500 mt-1">Повертайтеся завтра за наступним бонусом (Ваш стрік: День {currentStreak}/7)</p>
+              </div>
+            )}
+
+            {!profile?.isSuperAdmin && (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6">
+                <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Gift className="text-purple-500" /> Ввести Промокод</h3>
+                <form onSubmit={handlePromoSubmit} className="flex gap-3">
+                  <input type="text" value={promoInput} onChange={(e) => setPromoInput(e.target.value)} placeholder="Код..." className="flex-1 bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white uppercase" />
+                  <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-6 rounded-xl transition-colors">Застосувати</button>
+                </form>
+              </div>
+            )}
+            
+            {!isGoogleLinked && (
+               <button onClick={handleLinkGoogle} className="w-full bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 p-4 rounded-xl text-left transition-colors flex justify-between items-center group">
+                 <span className="font-bold text-white flex items-center gap-2"><Link size={18} className="text-blue-500"/> Прив'язати Google Акаунт</span>
+                 <span className="text-xs text-neutral-500">Для безпеки</span>
+               </button>
+            )}
+
+            <button onClick={handleLogout} className="w-full bg-neutral-900 border border-red-900/50 hover:bg-red-900/20 p-4 rounded-xl text-left transition-colors flex justify-between group">
+              <span className="font-bold text-red-400">Вийти з акаунта</span>
+              <LogOut size={18} className="text-red-500" />
+            </button>
+         </>
       ) : (
-        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 text-center mb-6">
-            <CheckCircle2 size={32} className="text-neutral-500 mx-auto mb-2" />
-            <h3 className="text-neutral-400 font-bold">Нагороду вже забрано</h3>
-            <p className="text-xs text-neutral-500 mt-1">Повертайтеся завтра за наступним бонусом (Ваш стрік: День {currentStreak}/7)</p>
-        </div>
-      )}
+         <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 animate-in slide-in-from-right-8 relative">
+            <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4 border-b border-neutral-800 pb-4">
+               <h3 className="text-xl font-black text-white flex items-center gap-3">
+                  <History className="text-blue-500" /> Історія Угод
+               </h3>
+               {historyItems.length > 0 && (
+                   <button onClick={handleClearHistory} className="text-xs text-red-400 hover:text-red-300 font-bold flex items-center gap-1 border border-red-900/50 bg-red-900/20 px-3 py-1.5 rounded-lg transition-colors">
+                       <Trash2 size={14} /> Очистити історію
+                   </button>
+               )}
+            </div>
+            
+            {historyItems.length === 0 ? (
+               <div className="text-center py-10">
+                  <ShoppingCart size={40} className="mx-auto text-neutral-600 mb-3" />
+                  <p className="text-neutral-400 font-bold">У вас ще немає завершених угод.</p>
+               </div>
+            ) : (
+               <div className="space-y-3">
+                  {historyItems.map(listing => {
+                     const card = cardsCatalog.find(c => c.id === listing.cardId);
+                     if (!card) return null;
+                     const style = getCardStyle(card.rarity, rarities);
+                     
+                     const isSale = listing.sellerUid === user.uid;
 
-      {!profile?.isSuperAdmin && (
-        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6">
-          <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Gift className="text-purple-500" /> Ввести Промокод</h3>
-          <form onSubmit={handlePromoSubmit} className="flex gap-3">
-            <input type="text" value={promoInput} onChange={(e) => setPromoInput(e.target.value)} placeholder="Код..." className="flex-1 bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white uppercase" />
-            <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-6 rounded-xl transition-colors">Застосувати</button>
-          </form>
-        </div>
+                     return (
+                        <div key={listing.id} className="bg-neutral-950 border border-neutral-800 rounded-xl p-3 flex items-center gap-4 hover:border-neutral-700 transition-colors">
+                           <div className={`w-12 h-16 shrink-0 rounded-md border-2 overflow-hidden ${style.border}`}>
+                              <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
+                           </div>
+                           <div className="flex-1 min-w-0">
+                              <div className="text-xs text-neutral-400 mb-0.5">{formatDate(listing.soldAt)}</div>
+                              <div className="font-bold text-white truncate">{card.name}</div>
+                              <div className="text-[10px] text-neutral-500 mt-1 flex items-center gap-1">
+                                 {isSale ? (
+                                    <>Покупець: <User size={10} className="text-green-400"/> <span className="text-green-400 font-bold">{listing.buyerNickname || "Невідомо"}</span></>
+                                 ) : (
+                                    <>Продавець: <User size={10} className="text-red-400"/> <span className="text-red-400 font-bold">{listing.sellerNickname || "Невідомо"}</span></>
+                                 )}
+                              </div>
+                           </div>
+                           <div className="text-right shrink-0">
+                              <div className="text-xs text-neutral-500 uppercase font-bold mb-1">{isSale ? "Продано" : "Куплено"}</div>
+                              <div className={`font-black text-lg flex items-center justify-end gap-1 ${isSale ? "text-green-400" : "text-red-400"}`}>
+                                 {isSale ? "+" : "-"}{listing.price} <Coins size={14} className="text-yellow-500" />
+                              </div>
+                           </div>
+                        </div>
+                     );
+                  })}
+               </div>
+            )}
+         </div>
       )}
-
-      <button onClick={handleLogout} className="w-full bg-neutral-900 border border-red-900/50 hover:bg-red-900/20 p-4 rounded-xl text-left transition-colors flex justify-between group">
-        <span className="font-bold text-red-400">Вийти з акаунта</span>
-        <LogOut size={18} className="text-red-500" />
-      </button>
     </div>
   );
 }
@@ -1652,6 +2137,7 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
 function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rarities, showToast }) {
   const [activeTab, setActiveTab] = useState("users");
   const [allUsers, setAllUsers] = useState([]);
+  const [isSyncing, setIsSyncing] = useState(false);
   
   const [viewingUser, setViewingUser] = useState(null);
   const [userInventory, setUserInventory] = useState([]);
@@ -1698,6 +2184,49 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
       return () => unsub();
     }
   }, [activeTab, db, appId, currentProfile]);
+
+  const syncAllProfiles = async () => {
+    if (!confirm("Це може зайняти певний час. Ця дія перерахує інвентар кожного гравця і оновить його статистику для рейтингу. Продовжити?")) return;
+    setIsSyncing(true);
+    showToast("Синхронізація розпочата...", "success");
+
+    try {
+        const usersSnap = await getDocs(collection(db, "artifacts", appId, "public", "data", "profiles"));
+        const batch = writeBatch(db);
+        let operations = 0;
+        
+        for (const userDoc of usersSnap.docs) {
+            const uid = userDoc.id;
+            const invSnap = await getDocs(collection(db, "artifacts", appId, "users", uid, "inventory"));
+            
+            let totalCardsCount = 0;
+            invSnap.forEach(d => { totalCardsCount += (d.data().amount || 0); });
+            
+            const uniqueCardsCount = invSnap.size;
+            
+            batch.update(userDoc.ref, { 
+                uniqueCardsCount: uniqueCardsCount,
+                totalCards: totalCardsCount
+            });
+            operations++;
+            
+            if (operations >= 450) {
+                await batch.commit();
+                operations = 0;
+            }
+        }
+        
+        if (operations > 0) {
+            await batch.commit();
+        }
+        
+        showToast("Синхронізацію успішно завершено!", "success");
+    } catch (e) {
+        console.error(e);
+        showToast("Сталася помилка під час синхронізації.", "error");
+    }
+    setIsSyncing(false);
+  };
 
   const handleDeleteUser = async (userToDelete) => {
     if (userToDelete.isSuperAdmin) return showToast("Не можна видалити Супер Адміністратора!", "error");
@@ -2028,9 +2557,18 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
           
           {!viewingUser && (
               <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 mb-6 flex flex-col sm:flex-row gap-3 items-end sm:items-center">
-                  <span className="text-white font-bold flex-1 w-full flex items-center gap-2"><Coins className="text-yellow-500"/> Швидко видати собі монети:</span>
+                  <div className="flex-1 w-full text-left">
+                     <span className="text-white font-bold flex items-center gap-2"><Coins className="text-yellow-500"/> Швидко видати собі монети:</span>
+                  </div>
                   <button onClick={() => giveCoinsToSelf(1000)} className="bg-yellow-600 hover:bg-yellow-500 w-full sm:w-auto px-6 py-2.5 rounded-xl text-yellow-950 font-bold transition-colors shadow-lg">+ 1000</button>
                   <button onClick={() => giveCoinsToSelf(5000)} className="bg-yellow-600 hover:bg-yellow-500 w-full sm:w-auto px-6 py-2.5 rounded-xl text-yellow-950 font-bold transition-colors shadow-lg">+ 5000</button>
+                  
+                  <div className="w-full sm:w-px h-px sm:h-8 bg-neutral-800 mx-2"></div>
+
+                  <button onClick={syncAllProfiles} disabled={isSyncing} className="bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 w-full sm:w-auto px-6 py-2.5 rounded-xl text-white font-bold transition-colors shadow-lg flex items-center justify-center gap-2">
+                      {isSyncing ? <Loader2 size={18} className="animate-spin" /> : <Database size={18} />}
+                      Синхронізувати Профілі
+                  </button>
               </div>
           )}
 
@@ -2122,12 +2660,12 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                         {u.isAdmin && !u.isSuperAdmin && <Shield size={14} className="text-purple-500" title="Адмін" />}
                         {u.isBanned && <span className="text-[10px] bg-red-900/50 text-red-400 px-2 py-0.5 rounded border border-red-800 uppercase font-black tracking-widest">Бан</span>}
                       </div>
-                      <div className="text-xs text-neutral-500">{u.email}</div>
+                      <div className="text-xs text-neutral-500">{u.email || "Приховано (Google)"}</div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="hidden sm:block text-right mr-2">
                          <div className="text-[10px] text-neutral-500 uppercase font-bold">Монети / Карти</div>
-                         <div className="text-sm font-bold text-yellow-500">{u.coins} <Coins size={12} className="inline text-yellow-600"/> / <span className="text-blue-400">{u.totalCards || 0}</span></div>
+                         <div className="text-sm font-bold text-yellow-500">{u.coins} <Coins size={12} className="inline text-yellow-600"/> / <span className="text-blue-400">{u.uniqueCardsCount || 0}</span></div>
                       </div>
 
                       {canToggleAdmin && (
@@ -2398,22 +2936,77 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
   );
 }
 
-// --- МОДАЛЬНЕ ВІКНО КАРТКИ ---
+// --- МОДАЛЬНЕ ВІКНО КАРТКИ З 3D ПАРАЛАКСОМ ---
 function CardModal({ viewingCard, setViewingCard, rarities }) {
+  const [tiltStyle, setTiltStyle] = useState({});
+  const [isHovering, setIsHovering] = useState(false);
+
   if (!viewingCard) return null;
-  const { card, amount } = viewingCard;
+  const { card } = viewingCard;
   const style = getCardStyle(card.rarity, rarities);
   const effectClass = card.effect ? `effect-${card.effect}` : '';
 
+  const handleMouseMove = (e) => {
+    const el = e.currentTarget;
+    const rect = el.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    
+    const rotateX = ((y - centerY) / centerY) * -15; 
+    const rotateY = ((x - centerX) / centerX) * 15;
+
+    setTiltStyle({
+      transform: `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.05, 1.05, 1.05)`,
+      transition: 'transform 0.1s ease-out'
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setIsHovering(false);
+    setTiltStyle({
+      transform: `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`,
+      transition: 'transform 0.5s ease-out'
+    });
+  };
+
+  const handleMouseEnter = () => {
+    setIsHovering(true);
+  };
+
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300" onClick={() => setViewingCard(null)}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-300 perspective-1000" onClick={() => setViewingCard(null)}>
       <div className="relative flex flex-col items-center w-full max-w-sm animate-in zoom-in-95 slide-in-from-bottom-10 duration-500" onClick={(e) => e.stopPropagation()}>
         <button onClick={() => setViewingCard(null)} className="absolute -top-12 right-0 text-neutral-400 hover:text-white font-bold tracking-widest uppercase transition-colors">Закрити ✕</button>
-        <div className={`w-full aspect-[2/3] rounded-3xl border-4 overflow-hidden shadow-[0_20px_70px_rgba(0,0,0,0.8)] ${style.border} ${effectClass} relative group`}>
-          <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
+        
+        <div 
+          className="preserve-3d w-full"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          onMouseEnter={handleMouseEnter}
+          onTouchMove={(e) => handleMouseMove(e.touches[0])}
+          onTouchEnd={handleMouseLeave}
+        >
+            <div 
+                className={`w-full aspect-[2/3] rounded-3xl border-4 overflow-hidden ${style.border} ${effectClass} relative group shadow-[0_20px_70px_rgba(0,0,0,0.8)]`}
+                style={tiltStyle}
+            >
+              <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
+              
+              {/* Відблиск світла при нахилі */}
+              {isHovering && (
+                  <div className="absolute inset-0 pointer-events-none mix-blend-overlay opacity-30 bg-gradient-to-tr from-white/0 via-white to-white/0"></div>
+              )}
+            </div>
         </div>
+        
         <div className="mt-8 flex flex-col items-center text-center w-full">
-          <h3 className="font-black text-4xl text-white mb-6 drop-shadow-xl">{card.name}</h3>
+          <div className={`text-sm font-black uppercase tracking-widest mb-2 ${style.text} flex items-center gap-1.5`}>
+             <Sparkles size={16} /> {card.rarity}
+          </div>
+          <h3 className="font-black text-4xl text-white mb-2 drop-shadow-xl">{card.name}</h3>
         </div>
       </div>
     </div>
