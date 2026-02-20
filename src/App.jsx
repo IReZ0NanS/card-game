@@ -38,7 +38,9 @@ import {
   Camera,
   Star,
   GripHorizontal,
-  Hexagon
+  Hexagon,
+  Volume2,
+  Settings
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
@@ -84,6 +86,17 @@ const formatDate = (dateString) => {
   if (!dateString) return "Невідомо";
   const options = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' };
   return new Date(dateString).toLocaleDateString('uk-UA', options);
+};
+
+export const playCardSound = (url, volume = 0.5) => {
+    if (!url) return;
+    try {
+        const audio = new Audio(url);
+        audio.volume = volume;
+        audio.play().catch(e => console.log("Audio play blocked by browser:", e));
+    } catch (err) {
+        console.log("Audio error", err);
+    }
 };
 
 // --- CSS ДЛЯ КРУТИХ ЕФЕКТІВ КАРТОК ТА 3D ---
@@ -191,7 +204,7 @@ const DEFAULT_PACKS = [
 ];
 
 const DEFAULT_CARDS_DB = [
-  { id: "c1", packId: "p1", name: "Учень Академії", rarity: "Звичайна", image: "https://placehold.co/400x600/222/aaa?text=Учень\nАкадемії", maxSupply: 0, pulledCount: 0, sellPrice: 15, effect: "" },
+  { id: "c1", packId: "p1", name: "Учень Академії", rarity: "Звичайна", image: "https://placehold.co/400x600/222/aaa?text=Учень\nАкадемії", maxSupply: 0, pulledCount: 0, sellPrice: 15, effect: "", soundUrl: "", soundVolume: 0.5 },
 ];
 
 const EFFECT_OPTIONS = [
@@ -269,6 +282,7 @@ export default function App() {
   const [cardsCatalog, setCardsCatalog] = useState([]);
   const [packsCatalog, setPacksCatalog] = useState([]);
   const [rarities, setRarities] = useState([]);
+  const [dailyRewards, setDailyRewards] = useState([1000, 2000, 3000, 4000, 5000, 6000, 7000]); // Нагороди по днях
 
   // Стан Гри
   const [currentView, setCurrentView] = useState("shop");
@@ -350,11 +364,13 @@ export default function App() {
         setCardsCatalog(data.cards || []);
         setPacksCatalog(data.packs || DEFAULT_PACKS);
         setRarities(data.rarities || DEFAULT_RARITIES);
+        setDailyRewards(data.dailyRewards || [1000, 2000, 3000, 4000, 5000, 6000, 7000]);
       } else {
         setDoc(settingsRef, {
           cards: DEFAULT_CARDS_DB,
           packs: DEFAULT_PACKS,
           rarities: DEFAULT_RARITIES,
+          dailyRewards: [1000, 2000, 3000, 4000, 5000, 6000, 7000]
         }).catch((e) => console.error(e));
       }
     }, (err) => {
@@ -782,6 +798,51 @@ export default function App() {
     }, amountToOpen === 1 ? 100 : 1500);
   };
 
+  // ПРОДАТИ ТІЛЬКИ ЩО ОТРИМАНІ КАРТКИ З ПАКУ
+  const sellPulledCards = async () => {
+      if (isProcessing || pulledCards.length === 0) return;
+      setIsProcessing(true);
+
+      let totalEarned = 0;
+      let totalCardsRemoved = pulledCards.length;
+      const countsMap = {};
+      
+      pulledCards.forEach(c => {
+         countsMap[c.id] = (countsMap[c.id] || 0) + 1;
+         totalEarned += (c.sellPrice ? Number(c.sellPrice) : SELL_PRICE);
+      });
+
+      try {
+        const batch = writeBatch(db);
+        
+        for (const [cardId, count] of Object.entries(countsMap)) {
+           const invDocRef = doc(db, "artifacts", GAME_ID, "users", user.uid, "inventory", cardId);
+           const existing = dbInventory.find(i => i.id === cardId);
+           
+           if (existing && existing.amount <= count) {
+               batch.delete(invDocRef); // Якщо продаємо всі екземпляри що маємо
+           } else {
+               batch.update(invDocRef, { amount: increment(-count) });
+           }
+        }
+        
+        const profileRef = doc(db, "artifacts", GAME_ID, "public", "data", "profiles", user.uid);
+        batch.update(profileRef, {
+          coins: increment(totalEarned),
+          totalCards: increment(-totalCardsRemoved)
+        });
+
+        await batch.commit();
+        showToast(`Успішно продано всі отримані картки! Отримано ${totalEarned} монет.`, "success");
+        setPulledCards([]);
+      } catch(e) {
+         console.error(e);
+         showToast("Помилка продажу карток.");
+      } finally {
+         setIsProcessing(false);
+      }
+  };
+
   const sellDuplicate = async (cardId) => {
     if (isProcessing) return;
     const existing = dbInventory.find((i) => i.id === cardId);
@@ -850,7 +911,7 @@ export default function App() {
     
     const baseList = specificInventory || dbInventory.map(item => {
         const cardData = cardsCatalog.find((c) => c.id === item.id);
-        return cardData ? { card: cardData, amount: item.amount } : null;
+        return cardData && item.amount > 0 ? { card: cardData, amount: item.amount } : null;
     }).filter(Boolean);
 
     const duplicates = baseList.filter(item => item.amount > 1);
@@ -955,7 +1016,7 @@ export default function App() {
   const fullInventory = dbInventory
     .map((item) => {
       const cardData = cardsCatalog.find((c) => c.id === item.id);
-      return cardData ? { card: cardData, amount: item.amount } : null;
+      return cardData && item.amount > 0 ? { card: cardData, amount: item.amount } : null;
     })
     .filter(Boolean);
 
@@ -1178,6 +1239,7 @@ export default function App() {
             rouletteItems={rouletteItems}
             pulledCards={pulledCards}
             setPulledCards={setPulledCards}
+            sellPulledCards={sellPulledCards}
             selectedPackId={selectedPackId}
             setSelectedPackId={setSelectedPackId}
             setViewingCard={setViewingCard}
@@ -1234,6 +1296,7 @@ export default function App() {
             showcases={showcases}
             fullInventory={fullInventory}
             setViewingCard={setViewingCard}
+            dailyRewards={dailyRewards}
           />
         )}
         {currentView === "rating" && (
@@ -1266,6 +1329,7 @@ export default function App() {
             rarities={rarities}
             showToast={showToast}
             addSystemLog={addSystemLog}
+            dailyRewards={dailyRewards}
           />
         )}
       </main>
@@ -1359,6 +1423,15 @@ function MarketView({ marketListings, cardsCatalog, rarities, currentUserUid, bu
                     <div key={listing.id} className="flex flex-col items-center animate-in zoom-in-95 group">
                         <div onClick={() => setViewingCard({ card })} className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-3 cursor-pointer transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-[0_15px_30px_rgba(0,0,0,0.6)] ${style.border} ${effectClass}`}>
                             <img src={card.image} alt={card.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                            {card.soundUrl && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); playCardSound(card.soundUrl, card.soundVolume); }}
+                                  className="absolute bottom-1 right-1 bg-black/80 text-white p-1.5 rounded-full hover:text-blue-400 z-30 transition-colors shadow-lg"
+                                  title="Відтворити звук"
+                                >
+                                  <Volume2 size={12} />
+                                </button>
+                            )}
                         </div>
                         
                         <div className="w-full px-1 text-center flex flex-col items-center">
@@ -1434,7 +1507,7 @@ function ListingModal({ listingCard, setListingCard, listOnMarket, isProcessing 
 }
 
 // --- МАГАЗИН ---
-function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRouletteSpinning, rouletteItems, pulledCards, setPulledCards, selectedPackId, setSelectedPackId, setViewingCard, isAdmin, isProcessing }) {
+function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRouletteSpinning, rouletteItems, pulledCards, setPulledCards, sellPulledCards, selectedPackId, setSelectedPackId, setViewingCard, isAdmin, isProcessing }) {
   
   const [roulettePos, setRoulettePos] = useState(0);
   const [rouletteOffset, setRouletteOffset] = useState(0);
@@ -1451,6 +1524,22 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
       return () => clearTimeout(timer);
     }
   }, [isRouletteSpinning]);
+
+  // Автоматичне відтворення звуку найрідкіснішої картки після відкриття паку
+  useEffect(() => {
+      if (pulledCards && pulledCards.length > 0) {
+          const cardsWithSound = pulledCards.filter(c => c.soundUrl);
+          if (cardsWithSound.length > 0) {
+              // Знаходимо найрідкіснішу картку зі звуком
+              cardsWithSound.sort((a,b) => {
+                  const wA = rarities.find(r => r.name === a.rarity)?.weight || 100;
+                  const wB = rarities.find(r => r.name === b.rarity)?.weight || 100;
+                  return wA - wB;
+              });
+              playCardSound(cardsWithSound[0].soundUrl, cardsWithSound[0].soundVolume);
+          }
+      }
+  }, [pulledCards, rarities]);
 
   if (isRouletteSpinning && rouletteItems.length > 0) {
     return (
@@ -1496,6 +1585,8 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
   }
 
   if (pulledCards && pulledCards.length > 0) {
+    const totalSellPrice = pulledCards.reduce((acc, c) => acc + (c.sellPrice ? Number(c.sellPrice) : SELL_PRICE), 0);
+
     return (
       <div className="flex flex-col items-center min-h-[65vh] animate-in zoom-in-95 duration-700 w-full pb-10">
         <h2 className="text-3xl sm:text-4xl font-black mb-8 text-white uppercase tracking-widest text-center drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]">
@@ -1520,6 +1611,15 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
                       Лімітка
                     </div>
                   )}
+                  {card.soundUrl && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); playCardSound(card.soundUrl, card.soundVolume); }}
+                        className="absolute bottom-2 right-2 bg-black/80 text-white p-2 rounded-full hover:text-blue-400 z-30 transition-colors shadow-lg"
+                        title="Відтворити звук"
+                      >
+                        <Volume2 size={16} />
+                      </button>
+                  )}
                 </div>
                 <div className="text-center w-full px-2">
                   <div className={`text-[10px] sm:text-xs font-black uppercase tracking-widest flex justify-center items-center gap-1 ${style.text}`}>
@@ -1532,12 +1632,21 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
           })}
         </div>
 
-        <button
-          onClick={() => setPulledCards([])}
-          className="px-10 py-4 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl transition-all hover:-translate-y-1 shadow-lg border border-neutral-700"
-        >
-          Забрати картки
-        </button>
+        <div className="flex flex-col sm:flex-row gap-4">
+            <button
+              onClick={() => setPulledCards([])}
+              className="px-8 py-4 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl transition-all hover:-translate-y-1 shadow-lg border border-neutral-700"
+            >
+              Забрати картки
+            </button>
+            <button
+              onClick={sellPulledCards}
+              disabled={isProcessing}
+              className="px-8 py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-white font-bold rounded-xl transition-all hover:-translate-y-1 shadow-lg flex items-center justify-center gap-2"
+            >
+              Продати всі (+{totalSellPrice} <Coins size={16}/>)
+            </button>
+        </div>
       </div>
     );
   }
@@ -1599,6 +1708,15 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
                       <div className="absolute top-1 right-1 bg-black/90 text-white text-[8px] px-1.5 py-0.5 rounded border border-neutral-700 font-bold z-10">
                         {isSoldOut ? "РОЗПРОДАНО" : `${card.maxSupply - (card.pulledCount || 0)}/${card.maxSupply}`}
                       </div>
+                    )}
+                    {card.soundUrl && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); playCardSound(card.soundUrl, card.soundVolume); }}
+                          className="absolute bottom-1 right-1 bg-black/80 text-white p-1.5 rounded-full hover:text-blue-400 z-30 transition-colors shadow-lg"
+                          title="Відтворити звук"
+                        >
+                          <Volume2 size={12} />
+                        </button>
                     )}
                   </div>
                   <div className="text-center px-1 w-full">
@@ -1870,6 +1988,16 @@ function InventoryView({
                         </div>
                       )}
                       <img src={item.card.image} alt={item.card.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                      
+                      {item.card.soundUrl && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); playCardSound(item.card.soundUrl, item.card.soundVolume); }}
+                            className="absolute bottom-1 right-1 bg-black/80 text-white p-1.5 rounded-full hover:text-blue-400 z-30 transition-colors shadow-lg"
+                            title="Відтворити звук"
+                          >
+                            <Volume2 size={12} />
+                          </button>
+                      )}
                     </div>
                     <div className="w-full flex flex-col items-center text-center px-1">
                       <div className={`text-[10px] font-black uppercase tracking-widest mb-1 ${style.text}`}>{item.card.rarity}</div>
@@ -2180,7 +2308,7 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
           
           const fullInv = invList.map(item => {
             const cardData = cardsCatalog.find(c => c.id === item.id);
-            return cardData ? { card: cardData, amount: item.amount } : null;
+            return cardData && item.amount > 0 ? { card: cardData, amount: item.amount } : null;
           }).filter(Boolean);
           
           setPlayerInventory(fullInv);
@@ -2304,6 +2432,15 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
                         <div key={idx} onClick={() => setViewingCard({ card, amount: 1 })} className="relative group cursor-pointer animate-in zoom-in-95 hover:-translate-y-2 transition-transform">
                             <div className={`w-28 sm:w-36 aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-950 shadow-lg ${style.border} ${effectClass}`}>
                                 <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
+                                {card.soundUrl && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); playCardSound(card.soundUrl, card.soundVolume); }}
+                                    className="absolute bottom-1 right-1 bg-black/80 text-white p-1.5 rounded-full hover:text-blue-400 z-30 transition-colors shadow-lg"
+                                    title="Відтворити звук"
+                                  >
+                                    <Volume2 size={12} />
+                                  </button>
+                                )}
                             </div>
                         </div>
                     );
@@ -2357,6 +2494,15 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
                     </div>
                   )}
                   <img src={item.card.image} alt={item.card.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                  {item.card.soundUrl && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); playCardSound(item.card.soundUrl, item.card.soundVolume); }}
+                        className="absolute bottom-1 right-1 bg-black/80 text-white p-1 rounded-full hover:text-blue-400 z-30 transition-colors shadow-lg"
+                        title="Відтворити звук"
+                      >
+                        <Volume2 size={12} />
+                      </button>
+                  )}
                 </div>
                 <div className="w-full text-center px-1">
                   <div className={`text-[8px] font-black uppercase tracking-widest mb-0.5 ${style.text}`}>{item.card.rarity}</div>
@@ -2372,7 +2518,7 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
 }
 
 // --- ПРОФІЛЬ ---
-function ProfileView({ profile, user, db, appId, handleLogout, showToast, canClaimDaily, marketListings, cardsCatalog, rarities, showcases, fullInventory, setViewingCard }) {
+function ProfileView({ profile, user, db, appId, handleLogout, showToast, canClaimDaily, marketListings, cardsCatalog, rarities, showcases, fullInventory, setViewingCard, dailyRewards }) {
   const [promoInput, setPromoInput] = useState("");
   const [activeTab, setActiveTab] = useState("main"); 
   const [isEditingAvatar, setIsEditingAvatar] = useState(false);
@@ -2490,7 +2636,7 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
         }
     }
 
-    const reward = newStreak * 1000;
+    const reward = dailyRewards[newStreak - 1] || (newStreak * 1000);
     
     try {
         const profileRef = doc(db, "artifacts", appId, "public", "data", "profiles", user.uid);
@@ -2508,6 +2654,7 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
 
   const currentStreak = profile?.dailyStreak || 0;
   const nextStreakDay = currentStreak >= 7 ? 1 : currentStreak + 1;
+  const nextReward = dailyRewards[nextStreakDay - 1] || (nextStreakDay * 1000);
 
   const historyItems = marketListings.filter(l => 
      l.status === "sold" && 
@@ -2636,6 +2783,15 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
                               <div key={idx} onClick={() => setViewingCard({ card, amount: 1 })} className="relative group cursor-pointer animate-in zoom-in-95 hover:-translate-y-2 transition-transform">
                                   <div className={`w-24 sm:w-32 md:w-36 aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-950 shadow-lg ${style.border} ${effectClass}`}>
                                       <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
+                                      {card.soundUrl && (
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); playCardSound(card.soundUrl, card.soundVolume); }}
+                                            className="absolute bottom-1 right-1 bg-black/80 text-white p-1.5 rounded-full hover:text-blue-400 z-30 transition-colors shadow-lg"
+                                            title="Відтворити звук"
+                                          >
+                                            <Volume2 size={12} />
+                                          </button>
+                                      )}
                                   </div>
                               </div>
                           );
@@ -2670,7 +2826,7 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
                   <div className="relative z-10 flex flex-col items-center">
                      <Gift size={40} className="text-yellow-100 mb-2 animate-bounce" />
                      <h3 className="text-xl font-black text-white uppercase tracking-widest mb-1">Щоденна Нагорода</h3>
-                     <p className="text-yellow-100 font-bold mb-4">День {nextStreakDay}/7 - Отримайте {nextStreakDay * 1000} монет!</p>
+                     <p className="text-yellow-100 font-bold mb-4">День {nextStreakDay}/7 - Отримайте {nextReward} монет!</p>
                      <button onClick={handleDailyClaim} className="bg-white text-orange-600 font-black py-3 px-8 rounded-xl hover:scale-105 transition-transform shadow-xl">
                          Забрати зараз!
                      </button>
@@ -2767,7 +2923,7 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, canCla
 }
 
 // --- АДМІН ПАНЕЛЬ ---
-function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rarities, showToast, addSystemLog }) {
+function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rarities, showToast, addSystemLog, dailyRewards }) {
   const [activeTab, setActiveTab] = useState("users");
   const [allUsers, setAllUsers] = useState([]);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -2787,7 +2943,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
   const [adminSetCoinsAmount, setAdminSetCoinsAmount] = useState(0);
 
   const [editingCard, setEditingCard] = useState(null);
-  const [cardForm, setCardForm] = useState({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "" });
+  const [cardForm, setCardForm] = useState({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "", soundUrl: "", soundVolume: 0.5 });
   const [editingPack, setEditingPack] = useState(null);
   const [packForm, setPackForm] = useState({ id: "", name: "", category: "Базові", cost: 50, image: "", customWeights: {}, isHidden: false });
 
@@ -2799,6 +2955,13 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
   const [cardPackFilter, setCardPackFilter] = useState("all");
 
   const [adminLogs, setAdminLogs] = useState([]);
+  
+  // Стейт для налаштувань щоденних нагород
+  const [rewardsForm, setRewardsForm] = useState(dailyRewards || [1000, 2000, 3000, 4000, 5000, 6000, 7000]);
+
+  useEffect(() => {
+    setRewardsForm(dailyRewards || [1000, 2000, 3000, 4000, 5000, 6000, 7000]);
+  }, [dailyRewards]);
 
   useEffect(() => {
     if (activeTab === "users") {
@@ -3108,6 +3271,8 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
         weight: cardForm.weight ? Number(cardForm.weight) : "",
         sellPrice: cardForm.sellPrice ? Number(cardForm.sellPrice) : SELL_PRICE,
         effect: cardForm.effect || "",
+        soundUrl: cardForm.soundUrl || "",
+        soundVolume: cardForm.soundVolume !== undefined ? Number(cardForm.soundVolume) : 0.5,
         pulledCount: editingCard ? (editingCard.pulledCount || 0) : 0
     };
 
@@ -3121,7 +3286,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
     addSystemLog("Адмін", `${editingCard ? 'Оновлено' : 'Створено'} картку: ${cardForm.name}`);
     
     setEditingCard(null);
-    setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "" });
+    setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "", soundUrl: "", soundVolume: 0.5 });
     showToast("Каталог оновлено!", "success");
   };
 
@@ -3153,7 +3318,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
           console.error(err);
           showToast("Помилка створення промокоду", "error");
       }
-  }
+  };
 
   const deletePromo = async (codeId) => {
       if (!confirm("Видалити промокод?")) return;
@@ -3165,7 +3330,19 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
           console.error(err);
           showToast("Помилка видалення.", "error");
       }
-  }
+  };
+
+  const saveDailyRewards = async (e) => {
+      e.preventDefault();
+      try {
+          await updateDoc(doc(db, "artifacts", appId, "public", "data", "gameSettings", "main"), { dailyRewards: rewardsForm });
+          addSystemLog("Адмін", "Оновлено суми щоденних нагород.");
+          showToast("Щоденні нагороди оновлено!", "success");
+      } catch (err) {
+          console.error(err);
+          showToast("Помилка оновлення нагород.", "error");
+      }
+  };
 
   const clearAdminLogs = async () => {
     if (!confirm("Очистити всі системні логи? Це безповоротно!")) return;
@@ -3181,7 +3358,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
         console.error(e);
         showToast("Помилка очищення логів.", "error");
     }
-  }
+  };
 
   const filteredPacks = packsCatalog.filter(p => p.name.toLowerCase().includes(packSearchTerm.toLowerCase()));
   
@@ -3241,6 +3418,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
         {currentProfile.isSuperAdmin && (
             <>
                 <button onClick={() => setActiveTab("promos")} className={`flex-1 min-w-[100px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === "promos" ? "bg-purple-600 text-white" : "text-neutral-400 hover:bg-neutral-800"}`}><Ticket size={18} /> Коди</button>
+                <button onClick={() => setActiveTab("settings")} className={`flex-1 min-w-[100px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === "settings" ? "bg-purple-600 text-white" : "text-neutral-400 hover:bg-neutral-800"}`}><Settings size={18} /> Налаштування</button>
                 <button onClick={() => setActiveTab("logs")} className={`flex-1 min-w-[100px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === "logs" ? "bg-red-900/80 text-white border-red-500 border" : "text-red-400 hover:bg-neutral-800"}`}><ScrollText size={18} /> Логи</button>
             </>
         )}
@@ -3397,6 +3575,43 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
             </div>
           )}
         </div>
+      )}
+
+      {/* --- Вкладка: НАЛАШТУВАННЯ (Щоденні нагороди) --- */}
+      {activeTab === "settings" && currentProfile.isSuperAdmin && (
+         <div className="space-y-6 animate-in fade-in">
+             <form onSubmit={saveDailyRewards} className="bg-neutral-900 border border-purple-900/50 p-6 rounded-2xl">
+                 <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
+                     <Gift className="text-orange-500"/> Налаштування Щоденних Бонусів
+                 </h3>
+                 <p className="text-sm text-neutral-400 mb-6">Встановіть винагороду для гравців за кожен день безперервного входу в гру. Цикл триває 7 днів.</p>
+                 
+                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+                     {rewardsForm.map((val, idx) => (
+                         <div key={idx} className="bg-neutral-950 p-3 rounded-xl border border-neutral-800">
+                             <label className="text-[10px] font-bold text-neutral-500 uppercase block mb-1">День {idx + 1}:</label>
+                             <div className="relative">
+                                 <Coins className="absolute left-3 top-1/2 -translate-y-1/2 text-yellow-500 w-4 h-4" />
+                                 <input 
+                                     type="number" 
+                                     min="0"
+                                     value={val} 
+                                     onChange={(e) => {
+                                         const newArr = [...rewardsForm];
+                                         newArr[idx] = Number(e.target.value);
+                                         setRewardsForm(newArr);
+                                     }} 
+                                     className="w-full bg-transparent pl-9 pr-2 py-2 text-white font-bold outline-none" 
+                                 />
+                             </div>
+                         </div>
+                     ))}
+                 </div>
+                 <button type="submit" className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded-xl shadow-lg transition-colors">
+                     Зберегти Нагороди
+                 </button>
+             </form>
+         </div>
       )}
 
       {/* --- Вкладка: ПРОМОКОДИ --- */}
@@ -3581,17 +3796,27 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                   <input type="number" step="0.01" placeholder="Індивід. Шанс (Вага)" value={cardForm.weight} onChange={(e) => setCardForm({ ...cardForm, weight: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white" title="Якщо заповнено - ігнорує глобальний шанс рідкості" />
                   <input type="number" placeholder="Ціна продажу (замовч. 15)" value={cardForm.sellPrice} onChange={(e) => setCardForm({ ...cardForm, sellPrice: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white text-green-400" title="Скільки монет отримає гравець за дублікат" />
                   
-                  <select value={cardForm.effect} onChange={(e) => setCardForm({ ...cardForm, effect: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white md:col-span-2 text-purple-400 font-bold">
+                  <select value={cardForm.effect} onChange={(e) => setCardForm({ ...cardForm, effect: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white text-purple-400 font-bold">
                     {EFFECT_OPTIONS.map(opt => <option key={opt.id} value={opt.id}>{opt.name}</option>)}
                   </select>
 
-                  <input type="text" placeholder="URL Картинки" value={cardForm.image} onChange={(e) => setCardForm({ ...cardForm, image: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white md:col-span-4" required />
+                  <input type="text" placeholder="URL Картинки" value={cardForm.image} onChange={(e) => setCardForm({ ...cardForm, image: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white" required />
+                  
+                  <div className="md:col-span-4 flex flex-col sm:flex-row gap-4 bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3">
+                      <input type="text" placeholder="URL Звуку (mp3/wav) необов'язково" value={cardForm.soundUrl || ""} onChange={(e) => setCardForm({ ...cardForm, soundUrl: e.target.value })} className="flex-1 bg-transparent text-white outline-none" />
+                      {cardForm.soundUrl && (
+                          <div className="w-full sm:w-40 flex flex-col justify-center sm:border-l sm:border-neutral-800 sm:pl-4 pt-2 sm:pt-0 border-t border-neutral-800 sm:border-t-0 mt-2 sm:mt-0">
+                              <label className="text-[10px] font-bold text-neutral-400 uppercase mb-1">Гучність: {cardForm.soundVolume !== undefined ? cardForm.soundVolume : 0.5}</label>
+                              <input type="range" min="0.1" max="1" step="0.1" value={cardForm.soundVolume !== undefined ? cardForm.soundVolume : 0.5} onChange={(e) => setCardForm({ ...cardForm, soundVolume: parseFloat(e.target.value) })} className="accent-purple-500 w-full" />
+                          </div>
+                      )}
+                  </div>
               </div>
               
               <div className="flex gap-3">
                 <button type="submit" disabled={!cardForm.packId} className="flex-1 bg-purple-600 disabled:bg-neutral-700 text-white font-bold py-3 rounded-xl">Зберегти картку</button>
                 {editingCard && (
-                  <button type="button" onClick={() => { setEditingCard(null); setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "" }); }} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
+                  <button type="button" onClick={() => { setEditingCard(null); setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "", soundUrl: "", soundVolume: 0.5 }); }} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
                 )}
               </div>
            </form>
@@ -3627,8 +3852,17 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                         {card.maxSupply - (card.pulledCount || 0)}/{card.maxSupply}
                       </div>
                     )}
+                    {card.soundUrl && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); playCardSound(card.soundUrl, card.soundVolume); }}
+                          className="absolute bottom-1 right-1 bg-black/80 text-white p-1 rounded-full hover:text-blue-400 z-30 transition-colors shadow-lg"
+                          title="Відтворити звук"
+                        >
+                          <Volume2 size={12} />
+                        </button>
+                    )}
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 z-20">
-                      <button onClick={() => { setEditingCard(card); setCardForm({ ...card, maxSupply: card.maxSupply || "", weight: card.weight || "", sellPrice: card.sellPrice || "", effect: card.effect || "" }); }} className="p-2 bg-blue-600 rounded-lg text-white shadow-lg transform hover:scale-110 transition-transform">
+                      <button onClick={() => { setEditingCard(card); setCardForm({ ...card, maxSupply: card.maxSupply || "", weight: card.weight || "", sellPrice: card.sellPrice || "", effect: card.effect || "", soundUrl: card.soundUrl || "", soundVolume: card.soundVolume !== undefined ? card.soundVolume : 0.5 }); }} className="p-2 bg-blue-600 rounded-lg text-white shadow-lg transform hover:scale-110 transition-transform">
                         <Edit2 size={18} />
                       </button>
                       <button onClick={() => deleteCard(card.id)} className="p-2 bg-red-600 rounded-lg text-white shadow-lg transform hover:scale-110 transition-transform">
