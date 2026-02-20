@@ -1622,7 +1622,7 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, invent
                     <span className="flex items-center gap-1"><CalendarDays size={14}/> З нами від: {formatDate(profile?.createdAt)}</span>
                 </div>
                 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 relative z-10 max-w-2xl mx-auto">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 relative z-10 max-w-2xl mx-auto">
                     <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
                         <Coins className="text-yellow-500 mb-2 w-6 h-6" />
                         <span className="text-xl font-black text-white">{profile?.coins}</span>
@@ -1637,6 +1637,11 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, invent
                         <PackageOpen className="text-purple-500 mb-2 w-6 h-6" />
                         <span className="text-xl font-black text-white">{profile?.packsOpened || 0}</span>
                         <span className="text-[10px] text-neutral-500 font-bold uppercase mt-1">Відкрито паків</span>
+                    </div>
+                    <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
+                        <Coins className="text-red-500 mb-2 w-6 h-6" />
+                        <span className="text-xl font-black text-white">{profile?.coinsSpentOnPacks || 0}</span>
+                        <span className="text-[10px] text-neutral-500 font-bold uppercase mt-1">Витрачено <Coins size={8} className="inline"/></span>
                     </div>
                     <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
                         <Zap className="text-green-500 mb-2 w-6 h-6" />
@@ -2545,7 +2550,7 @@ function InventoryView({
                     <div onClick={() => setViewingCard({ card: item.card, amount: item.amount })} className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-3 transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-[0_15px_30px_rgba(0,0,0,0.6)] ${style.border} ${effectClass}`}>
                       {Number(item.card.maxSupply) > 0 && (
                           <div className="absolute top-1 left-1 bg-black/90 text-white font-black text-[9px] px-1.5 py-0.5 rounded-sm z-10 border border-neutral-700 shadow-xl">
-                              ЛІМІТКА
+                              {item.card.maxSupply}
                           </div>
                       )}
                       {item.amount > 1 && (
@@ -2962,7 +2967,7 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
             <span className="flex items-center gap-1"><CalendarDays size={14}/> З нами від: {formatDate(playerInfo.createdAt)}</span>
         </div>
         
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 relative z-10 mt-6 max-w-2xl mx-auto">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 relative z-10 mt-6 max-w-2xl mx-auto">
           <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
             <Coins className="text-yellow-500 mb-2 w-6 h-6" />
             <span className="text-xl font-black text-white">{playerInfo.coins}</span>
@@ -2977,6 +2982,11 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
             <PackageOpen className="text-purple-500 mb-2 w-6 h-6" />
             <span className="text-xl font-black text-white">{playerInfo.packsOpened || 0}</span>
             <span className="text-[10px] text-neutral-500 font-bold uppercase mt-1">Відкрито паків</span>
+          </div>
+          <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
+            <Coins className="text-red-500 mb-2 w-6 h-6" />
+            <span className="text-xl font-black text-white">{playerInfo.coinsSpentOnPacks || 0}</span>
+            <span className="text-[10px] text-neutral-500 font-bold uppercase mt-1">Витрачено <Coins size={8} className="inline"/></span>
           </div>
           <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
             <Zap className="text-green-500 mb-2 w-6 h-6" />
@@ -3002,7 +3012,7 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
                             <div className={`w-28 sm:w-36 aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-950 shadow-lg ${style.border} ${effectClass}`}>
                                 {Number(card.maxSupply) > 0 && (
                                     <div className="absolute top-1 left-1 bg-black/90 text-white text-[8px] sm:text-[10px] px-2 py-1 rounded-md border border-neutral-700 font-black z-10">
-                                        ЛІМІТКА
+                                        {card.maxSupply} шт.
                                     </div>
                                 )}
                                 <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
@@ -3064,7 +3074,7 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
                 <div className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-2 ${style.border} ${effectClass}`}>
                   {Number(item.card.maxSupply) > 0 && (
                       <div className="absolute top-1 left-1 bg-black/90 text-white font-black text-[9px] px-1.5 py-0.5 rounded-sm z-10 border border-neutral-700 shadow-xl">
-                          ЛІМІТКА
+                          {item.card.maxSupply} шт.
                       </div>
                   )}
                   {item.amount > 1 && (
