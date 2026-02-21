@@ -155,7 +155,7 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
             const isLevelUp = hp <= 0;
             let updates = { coins: increment(tempCoins) };
             
-            if (isLevelUp) updates.farmLevel = increment(1); 
+            if (isLevelUp) updates.farmLevel = playerLevel + 1; 
 
             // Додаємо монети на баланс
             const profileRef = doc(db, "artifacts", appId, "public", "data", "profiles", profile.uid);
