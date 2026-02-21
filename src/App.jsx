@@ -1399,6 +1399,7 @@ export default function App() {
         )}
         {currentView === "profile" && (
           <ProfileView
+            cardStats = {cardStats}
             profile={profile}
             user={user}
             db={db}
@@ -1506,10 +1507,25 @@ function NavButton({ icon, label, isActive, onClick }) {
 }
 
 // --- ПРОФІЛЬ ГРАВЦЯ ---
-function ProfileView({ profile, user, db, appId, handleLogout, showToast, inventoryCount, canClaimDaily, dailyRewards, premiumDailyRewards, isPremiumActive }) {
+function ProfileView({ profile, user, db, appId, handleLogout, showToast, inventoryCount, canClaimDaily, dailyRewards, premiumDailyRewards, isPremiumActive, showcases, cardsCatalog, rarities, fullInventory, setViewingCard, cardStats }) {
     const [avatarInput, setAvatarInput] = useState("");
     const [promoInput, setPromoInput] = useState("");
     const [isProcessing, setIsProcessing] = useState(false);
+    // Шукаємо головну вітрину
+    const mainShowcase = showcases?.find(s => s.id === profile?.mainShowcaseId);
+    
+    // Перевіряємо, чи є ці картки у вашому інвентарі
+    const validShowcaseCards = [];
+    if (mainShowcase && mainShowcase.cardIds) {
+        const tempInv = JSON.parse(JSON.stringify(fullInventory));
+        for (const cid of mainShowcase.cardIds) {
+            const invItem = tempInv.find(i => i.card.id === cid);
+            if (invItem && invItem.amount > 0) {
+                validShowcaseCards.push(invItem.card);
+                invItem.amount -= 1;
+            }
+        }
+    }
 
     const claimDaily = async () => {
         if (isProcessing || !canClaimDaily) return;
@@ -1650,7 +1666,34 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, invent
                     </div>
                 </div>
             </div>
-
+                    {/* ВІТРИНА ГРАВЦЯ */}
+            {mainShowcase && validShowcaseCards.length > 0 && (
+                <div className="mb-10 max-w-4xl mx-auto">
+                    <div className="flex items-center gap-3 mb-4 justify-center">
+                        <Star className="text-yellow-500 fill-yellow-500" size={24} />
+                        <h3 className="text-2xl font-black text-white uppercase tracking-widest">{mainShowcase.name}</h3>
+                    </div>
+                    <div className="bg-neutral-900 border-2 border-yellow-500/30 rounded-3xl p-6 flex flex-wrap justify-center gap-4 shadow-[0_0_30px_rgba(234,179,8,0.1)]">
+                        {validShowcaseCards.map((card, idx) => {
+                            const style = getCardStyle(card.rarity, rarities);
+                            const effectClass = card.effect ? `effect-${card.effect}` : '';
+                            return (
+                                <div key={idx} onClick={() => setViewingCard({ card, amount: 1 })} className="relative group cursor-pointer animate-in zoom-in-95 hover:-translate-y-2 transition-transform">
+                                    <div className={`w-28 sm:w-36 aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-950 shadow-lg ${style.border} ${effectClass}`}>
+                                        {Number(card.maxSupply) > 0 && (
+                                            <div className="absolute top-1 left-1 bg-black/90 text-white text-[8px] sm:text-[10px] px-2 py-1 rounded-md border border-neutral-700 font-black z-10">
+                                                {cardStats?.[card.id] || 0} / {card.maxSupply}
+                                            </div>
+                                        )}
+                                        <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
                 {/* Щоденна нагорода */}
                 <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 relative overflow-hidden group">
@@ -3994,22 +4037,22 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
       {/* --- Вкладка: НАЛАШТУВАННЯ (Щоденні нагороди) --- */}
       {activeTab === "settings" && currentProfile.isSuperAdmin && (
          <div className="space-y-6 animate-in fade-in">
-                      <div className="bg-red-950/40 border border-red-900 p-6 rounded-2xl text-center">
-                <h3 className="text-xl font-black text-red-500 mb-2 flex items-center justify-center gap-2">
-                    <AlertCircle /> ВЕЛИКА ЧИСТКА (ВАЙП)
-                </h3>
-                <p className="text-sm text-red-400/80 mb-4">
-                    Ця кнопка видалить ВСІ картки з інвентарів, закриє ринок, видалить вітрини та скине баланс і статистику ВСІМ гравцям до стартових 200 монет.
-                </p>
-                <button 
-                    onClick={globalWipe} 
-                    disabled={isSyncing}
-                    className="bg-red-600 hover:bg-red-500 disabled:bg-neutral-800 text-white font-black py-3 px-8 rounded-xl shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all flex items-center justify-center gap-2 mx-auto"
-                >
-                    {isSyncing ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                    СТЕРТИ ВСІ ДАНІ ГРАВЦІВ
-                </button>
-            </div>
+                    <div className="bg-red-950/40 border border-red-900 p-6 rounded-2xl text-center">
+              <h3 className="text-xl font-black text-red-500 mb-2 flex items-center justify-center gap-2">
+                  <AlertCircle /> ВЕЛИКА ЧИСТКА (ВАЙП)
+              </h3>
+              <p className="text-sm text-red-400/80 mb-4">
+                  Ця кнопка видалить ВСІ картки з інвентарів, закриє ринок, видалить вітрини та скине баланс і статистику ВСІМ гравцям до стартових 200 монет.
+              </p>
+              <button 
+                  onClick={globalWipe} 
+                  disabled={isSyncing}
+                  className="bg-red-600 hover:bg-red-500 disabled:bg-neutral-800 text-white font-black py-3 px-8 rounded-xl shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all flex items-center justify-center gap-2 mx-auto"
+              >
+                  {isSyncing ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                  СТЕРТИ ВСІ ДАНІ ГРАВЦІВ
+              </button>
+          </div>
              <form onSubmit={saveSettings} className="bg-neutral-900 border border-purple-900/50 p-6 rounded-2xl">
                  <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
                      <Settings className="text-blue-500"/> Глобальні Налаштування
