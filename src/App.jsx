@@ -293,6 +293,7 @@ export default function App() {
   // Глобальні налаштування
   const [cardsCatalog, setCardsCatalog] = useState([]);
   const [packsCatalog, setPacksCatalog] = useState([]);
+  const [cardStats, setCardStats] = useState({}); // Сюди будемо зберігати лічильники ліміток
   const [rarities, setRarities] = useState([]);
   const [dailyRewards, setDailyRewards] = useState([1000, 2000, 3000, 4000, 5000, 6000, 7000]); 
   const [premiumDailyRewards, setPremiumDailyRewards] = useState([2000, 4000, 6000, 8000, 10000, 12000, 15000]); 
@@ -394,16 +395,7 @@ export default function App() {
         setPremiumDurationDays(data.premiumDurationDays !== undefined ? data.premiumDurationDays : 30);
         setPremiumShopItems(data.premiumShopItems || []);
       } else {
-        setDoc(settingsRef, {
-          cards: DEFAULT_CARDS_DB,
-          packs: DEFAULT_PACKS,
-          rarities: DEFAULT_RARITIES,
-          dailyRewards: [1000, 2000, 3000, 4000, 5000, 6000, 7000],
-          premiumDailyRewards: [2000, 4000, 6000, 8000, 10000, 12000, 15000],
-          premiumPrice: 10000,
-          premiumDurationDays: 30,
-          premiumShopItems: []
-        }).catch((e) => console.error(e));
+        console.warn("Каталог порожній або ще не створений Адміном.");
       }
     }, (err) => {
       console.error("БД Помилка:", err);
@@ -463,6 +455,15 @@ export default function App() {
       setDbInventory(items);
     });
 
+    const statsRef = collection(db, "artifacts", GAME_ID, "public", "data", "cardStats");
+    const unsubCardStats = onSnapshot(statsRef, (snapshot) => {
+      const stats = {};
+      snapshot.forEach((doc) => {
+        stats[doc.id] = doc.data().pulledCount || 0;
+      });
+      setCardStats(stats);
+    });
+
     const marketRef = collection(db, "artifacts", GAME_ID, "public", "data", "market");
     const unsubMarket = onSnapshot(marketRef, (snapshot) => {
       const listings = [];
@@ -483,6 +484,7 @@ export default function App() {
       unsubInv();
       unsubMarket();
       unsubShowcases();
+      unsubCardStats();
     };
   }, [user]);
 
@@ -765,7 +767,7 @@ export default function App() {
       let tempCatalog = JSON.parse(JSON.stringify(cardsCatalog));
       let results = [];
       let countsMap = {};
-      let needsCatalogUpdate = false; 
+      //let needsCatalogUpdate = false; 
       let totalEarnedCoins = 0; 
       const availablePackCards = tempCatalog.filter((c) => c.packId === packId);
 
@@ -815,14 +817,6 @@ export default function App() {
             }
         }
 
-        if (newCard.maxSupply > 0) {
-          let catalogRef = tempCatalog.find(c => c.id === newCard.id);
-          if (catalogRef) {
-              catalogRef.pulledCount = (catalogRef.pulledCount || 0) + 1;
-              needsCatalogUpdate = true;
-          }
-        }
-
         results.push(newCard);
         countsMap[newCard.id] = (countsMap[newCard.id] || 0) + 1;
         totalEarnedCoins += (newCard.sellPrice ? Number(newCard.sellPrice) : SELL_PRICE);
@@ -846,9 +840,12 @@ export default function App() {
           coinsEarnedFromPacks: increment(totalEarnedCoins)
         });
 
-        if (needsCatalogUpdate) {
-            const settingsRef = doc(db, "artifacts", GAME_ID, "public", "data", "gameSettings", "main");
-            batch.update(settingsRef, { cards: tempCatalog });
+        for (const card of results) {
+          if (Number(card.maxSupply) > 0) {
+            const statDocRef = doc(db, "artifacts", GAME_ID, "public", "data", "cardStats", card.id);
+            // Додаємо +1 до лічильника конкретної картки в безпечній папці
+            batch.set(statDocRef, { pulledCount: increment(1) }, { merge: true });
+          }
         }
 
         for (const [cardId, count] of Object.entries(countsMap)) {
@@ -1328,6 +1325,7 @@ export default function App() {
       <main className="max-w-5xl mx-auto p-4 mt-4 animate-in fade-in duration-500">
         {currentView === "shop" && (
           <ShopView
+            cardStats={cardStats}
             packs={packsCatalog}
             cardsCatalog={cardsCatalog}
             rarities={rarities}
@@ -1348,6 +1346,7 @@ export default function App() {
         )}
         {currentView === "premium" && (
           <PremiumShopView
+            cardStats={cardStats}
              profile={profile}
              user={user}
              db={db}
@@ -1429,6 +1428,7 @@ export default function App() {
         )}
         {currentView === "publicProfile" && viewingPlayerProfile && (
           <PublicProfileView
+            cardStats={cardStats}
             db={db}
             appId={GAME_ID}
             targetUid={viewingPlayerProfile}
@@ -1725,7 +1725,7 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, invent
 }
 
 // --- ПРЕМІУМ МАГАЗИН ---
-function PremiumShopView({ profile, user, db, appId, premiumPrice, premiumDurationDays, premiumShopItems, showToast, isProcessing, setIsProcessing, addSystemLog, isPremiumActive, cardsCatalog, rarities, setViewingCard }) {
+function PremiumShopView({ profile, cardStats, user, db, appId, premiumPrice, premiumDurationDays, premiumShopItems, showToast, isProcessing, setIsProcessing, addSystemLog, isPremiumActive, cardsCatalog, rarities, setViewingCard }) {
     
     const [newNickname, setNewNickname] = useState("");
 
@@ -2070,7 +2070,7 @@ function ListingModal({ listingCard, setListingCard, listOnMarket, isProcessing 
 }
 
 // --- МАГАЗИН ПАКІВ ---
-function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRouletteSpinning, rouletteItems, pulledCards, setPulledCards, sellPulledCards, selectedPackId, setSelectedPackId, setViewingCard, isAdmin, isProcessing, isPremiumActive }) {
+function ShopView({ packs, cardsCatalog, cardStats, rarities, openPack, openingPackId, isRouletteSpinning, rouletteItems, pulledCards, setPulledCards, sellPulledCards, selectedPackId, setSelectedPackId, setViewingCard, isAdmin, isProcessing, isPremiumActive }) {
   
   const [roulettePos, setRoulettePos] = useState(0);
   const [rouletteOffset, setRouletteOffset] = useState(0);
@@ -2166,7 +2166,7 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
                   <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
                   {Number(card.maxSupply) > 0 && (
                     <div className="absolute top-2 right-2 bg-black/90 text-white text-[8px] sm:text-[10px] px-2 py-1 rounded-md border border-neutral-700 font-black z-10">
-                      Лімітка
+                      {cardStats[card.id] || 0} / {card.maxSupply}
                     </div>
                   )}
                   {card.soundUrl && (
@@ -2265,7 +2265,7 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
               const style = getCardStyle(card.rarity, rarities);
               const effectClass = card.effect ? `effect-${card.effect}` : '';
               const maxSup = Number(card.maxSupply) || 0;
-              const isSoldOut = maxSup > 0 && (card.pulledCount || 0) >= maxSup;
+              const isSoldOut = maxSup > 0 && (cardStats[card.id] || 0) >= maxSup;
 
               return (
                 <div key={card.id} className={`flex flex-col items-center group ${isSoldOut ? "opacity-50 grayscale" : "cursor-pointer"}`} onClick={() => !isSoldOut && setViewingCard({ card })}>
@@ -2273,7 +2273,7 @@ function ShopView({ packs, cardsCatalog, rarities, openPack, openingPackId, isRo
                     <img src={card.image} alt={card.name} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
                     {maxSup > 0 && (
                       <div className="absolute top-1 right-1 bg-black/90 text-white text-[8px] px-1.5 py-0.5 rounded border border-neutral-700 font-bold z-10">
-                        {isSoldOut ? "РОЗПРОДАНО" : `${maxSup - (card.pulledCount || 0)}/${maxSup}`}
+                        {isSoldOut ? "РОЗПРОДАНО" : `${maxSup - (cardStats[card.id] || 0)}/${maxSup}`}
                       </div>
                     )}
                     {card.soundUrl && (
@@ -2384,7 +2384,7 @@ function OpenButton({ amount, cost, onClick, opening, color = "bg-yellow-500 hov
 function InventoryView({ 
     inventory, rarities, sellDuplicate, sellAllDuplicates, sellEveryDuplicate, 
     sellPrice, catalogTotal, setViewingCard, setListingCard, packsCatalog, 
-    showcases, createShowcase, deleteShowcase, setMainShowcase, saveShowcaseCards, profile, cardsCatalog 
+    showcases, createShowcase, deleteShowcase, setMainShowcase, saveShowcaseCards, profile, cardsCatalog, cardStats
 }) {
   const [tab, setTab] = useState("cards"); // "cards" or "showcases"
   
@@ -2847,7 +2847,7 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
 }
 
 // --- ПУБЛІЧНИЙ ПРОФІЛЬ ІНШОГО ГРАВЦЯ ---
-function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, rarities, setViewingCard, packsCatalog }) {
+function PublicProfileView({ cardStats, db, appId, targetUid, goBack, cardsCatalog, rarities, setViewingCard, packsCatalog }) {
   const [playerInfo, setPlayerInfo] = useState(null);
   const [playerInventory, setPlayerInventory] = useState([]);
   const [mainShowcase, setMainShowcase] = useState(null);
@@ -3073,9 +3073,9 @@ function PublicProfileView({ db, appId, targetUid, goBack, cardsCatalog, raritie
               >
                 <div className={`relative w-full aspect-[2/3] rounded-xl border-2 overflow-hidden bg-neutral-900 mb-2 ${style.border} ${effectClass}`}>
                   {Number(item.card.maxSupply) > 0 && (
-                      <div className="absolute top-1 left-1 bg-black/90 text-white font-black text-[9px] px-1.5 py-0.5 rounded-sm z-10 border border-neutral-700 shadow-xl">
-                          {item.card.maxSupply} шт.
-                      </div>
+                    <div className="absolute top-1 left-1 bg-black/90 text-white font-black text-[9px] px-1.5 py-0.5 rounded-sm z-10 border border-neutral-700 shadow-xl">
+                        {cardStats[item.card.id] || 0} / {item.card.maxSupply}
+                    </div>
                   )}
                   {item.amount > 1 && (
                     <div className="absolute top-1 right-1 bg-neutral-950/90 text-white font-black text-[10px] px-2 py-0.5 rounded-full z-10 border border-neutral-700 shadow-xl">
@@ -3492,6 +3492,60 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
           console.error(err);
           showToast("Помилка операції з преміумом.", "error");
       }
+  };
+
+  const globalWipe = async () => {
+      // Подвійний захист від випадкового натискання
+      if (!confirm("УВАГА, МІЙ ЛОРД! Це повністю видалить всі інвентарі, лоти на ринку, вітрини та скине баланс і статистику всіх гравців. Продовжити?")) return;
+      if (!confirm("ВИ ВПЕВНЕНІ? Цю дію неможливо буде скасувати!")) return;
+
+      // Використовуємо setIsSyncing, щоб показати завантаження на кнопці
+      setIsSyncing(true);
+      showToast("Розпочато Велику Чистку...", "success");
+
+      try {
+          // 1. Видаляємо всі лоти на ринку
+          const marketSnap = await getDocs(collection(db, "artifacts", appId, "public", "data", "market"));
+          marketSnap.forEach((d) => deleteDoc(d.ref));
+
+          // 2. Очищаємо лічильники ліміток (якщо вони там вже створилися)
+          const statsSnap = await getDocs(collection(db, "artifacts", appId, "public", "data", "cardStats"));
+          statsSnap.forEach((d) => deleteDoc(d.ref));
+
+          // 3. Проходимося по кожному гравцю
+          const profilesSnap = await getDocs(collection(db, "artifacts", appId, "public", "data", "profiles"));
+
+          for (const profileDoc of profilesSnap.docs) {
+              const uid = profileDoc.id;
+
+              // Обнуляємо статистику та гроші (залишаємо нікнейм, бани, адмінку і преміум)
+              await updateDoc(profileDoc.ref, {
+                  coins: 200, // Початкові монети (змініть, якщо треба)
+                  totalCards: 0,
+                  uniqueCardsCount: 0,
+                  packsOpened: 0,
+                  coinsSpentOnPacks: 0,
+                  coinsEarnedFromPacks: 0,
+                  mainShowcaseId: null
+              });
+
+              // Видаляємо старий інвентар гравця
+              const invSnap = await getDocs(collection(db, "artifacts", appId, "users", uid, "inventory"));
+              invSnap.forEach((d) => deleteDoc(d.ref));
+
+              // Видаляємо старі вітрини гравця
+              const showcasesSnap = await getDocs(collection(db, "artifacts", appId, "users", uid, "showcases"));
+              showcasesSnap.forEach((d) => deleteDoc(d.ref));
+          }
+
+          showToast("Королівство успішно очищено від старих карток!", "success");
+          addSystemLog("Адмін", "ГЛОБАЛЬНИЙ ВАЙП: інвентарі, ринок, статистика та баланс скинуті до нуля.");
+      } catch (error) {
+          console.error(error);
+          showToast("Помилка під час очищення!", "error");
+      }
+      
+      setIsSyncing(false);
   };
 
   const savePack = async (e) => {
@@ -3940,6 +3994,22 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
       {/* --- Вкладка: НАЛАШТУВАННЯ (Щоденні нагороди) --- */}
       {activeTab === "settings" && currentProfile.isSuperAdmin && (
          <div className="space-y-6 animate-in fade-in">
+                      <div className="bg-red-950/40 border border-red-900 p-6 rounded-2xl text-center">
+                <h3 className="text-xl font-black text-red-500 mb-2 flex items-center justify-center gap-2">
+                    <AlertCircle /> ВЕЛИКА ЧИСТКА (ВАЙП)
+                </h3>
+                <p className="text-sm text-red-400/80 mb-4">
+                    Ця кнопка видалить ВСІ картки з інвентарів, закриє ринок, видалить вітрини та скине баланс і статистику ВСІМ гравцям до стартових 200 монет.
+                </p>
+                <button 
+                    onClick={globalWipe} 
+                    disabled={isSyncing}
+                    className="bg-red-600 hover:bg-red-500 disabled:bg-neutral-800 text-white font-black py-3 px-8 rounded-xl shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all flex items-center justify-center gap-2 mx-auto"
+                >
+                    {isSyncing ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                    СТЕРТИ ВСІ ДАНІ ГРАВЦІВ
+                </button>
+            </div>
              <form onSubmit={saveSettings} className="bg-neutral-900 border border-purple-900/50 p-6 rounded-2xl">
                  <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
                      <Settings className="text-blue-500"/> Глобальні Налаштування
