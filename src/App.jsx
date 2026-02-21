@@ -44,6 +44,8 @@ import {
   Gem
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
+import { Swords } from "lucide-react"; 
+import FarmView from './Farm';
 import {
   getAuth,
   signInWithCustomToken,
@@ -1307,6 +1309,14 @@ export default function App() {
                  <Coins size={18} className="text-yellow-500" />
                  <span className="text-yellow-500 font-black text-base sm:text-lg">{profile?.coins}</span>
                </div>
+               <button
+                 onClick={() => setCurrentView("premium")}
+                 className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl border transition-all ${currentView === "premium" ? "bg-fuchsia-900/40 border-fuchsia-500/60 shadow-[0_0_15px_rgba(217,70,239,0.3)]" : "bg-neutral-950 border-neutral-800 hover:border-fuchsia-500/50"}`}
+                 title="Преміум Магазин"
+               >
+                 <Gem size={18} className="text-fuchsia-400 animate-pulse" />
+                 <span className="hidden sm:block text-fuchsia-400 font-bold text-sm tracking-wide">Преміум</span>
+               </button>
             </div>
           </div>
         </div>
@@ -1323,6 +1333,16 @@ export default function App() {
       )}
 
       <main className="max-w-5xl mx-auto p-4 mt-4 animate-in fade-in duration-500">
+        {currentView === "farm" && (
+          <FarmView
+            profile={profile}
+            db={db}
+            appId={GAME_ID}
+            cardsCatalog={cardsCatalog}
+            rarities={rarities}
+            showToast={showToast}
+          />
+        )}
         {currentView === "shop" && (
           <ShopView
             cardStats={cardStats}
@@ -1473,10 +1493,10 @@ export default function App() {
 
       <nav className="fixed bottom-0 w-full bg-neutral-900 border-t border-neutral-800 px-2 py-2 z-40 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] overflow-x-auto hide-scrollbar">
         <div className="min-w-max mx-auto flex justify-center sm:gap-2">
+          <NavButton icon={<Swords size={22} />} label="Фарм" isActive={currentView === "farm"} onClick={() => setCurrentView("farm")} />
           <NavButton icon={<PackageOpen size={22} />} label="Магазин" isActive={currentView === "shop"} onClick={() => { setCurrentView("shop"); setPulledCards([]); setSelectedPackId(null); }} />
           <NavButton icon={<LayoutGrid size={22} />} label="Інвентар" isActive={currentView === "inventory"} onClick={() => setCurrentView("inventory")} />
           <NavButton icon={<Store size={22} />} label="Ринок" isActive={currentView === "market"} onClick={() => setCurrentView("market")} />
-          <NavButton icon={<Gem size={22} className={currentView === "premium" ? "text-fuchsia-400" : ""} />} label="Преміум" isActive={currentView === "premium"} onClick={() => setCurrentView("premium")} />
           <NavButton icon={<Trophy size={22} />} label="Рейтинг" isActive={currentView === "rating" || currentView === "publicProfile"} onClick={() => setCurrentView("rating")} />
           <NavButton icon={<User size={22} />} label="Профіль" isActive={currentView === "profile"} onClick={() => setCurrentView("profile")} />
           
@@ -4037,7 +4057,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
       {/* --- Вкладка: НАЛАШТУВАННЯ (Щоденні нагороди) --- */}
       {activeTab === "settings" && currentProfile.isAdmin && (
          <div className="space-y-6 animate-in fade-in">
-          
+
              <form onSubmit={saveSettings} className="bg-neutral-900 border border-purple-900/50 p-6 rounded-2xl">
                  <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
                      <Settings className="text-blue-500"/> Глобальні Налаштування
