@@ -44,7 +44,7 @@ import {
   Gem
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
-import { Swords } from "lucide-react"; 
+import { Swords, Edit } from "lucide-react";
 import FarmView from './Farm';
 import {
   getAuth,
@@ -212,6 +212,17 @@ const DEFAULT_PACKS = [
   }
 ];
 
+const DEFAULT_BOSSES = [
+  {
+    id: "boss_1",
+    cardId: "c1", // Беремо вашу першу картку "Учень Академії"
+    maxHp: 1000,
+    rewardPerClick: 2,
+    killBonus: 500,
+    cooldownHours: 4
+  }
+];
+
 const DEFAULT_CARDS_DB = [
   { id: "c1", packId: "p1", name: "Учень Академії", rarity: "Звичайна", image: "https://placehold.co/400x600/222/aaa?text=Учень\nАкадемії", maxSupply: 0, pulledCount: 0, sellPrice: 15, effect: "", soundUrl: "", soundVolume: 0.5 },
 ];
@@ -293,6 +304,7 @@ export default function App() {
   const [dbError, setDbError] = useState("");
 
   // Глобальні налаштування
+  const [bosses, setBosses] = useState([]);
   const [cardsCatalog, setCardsCatalog] = useState([]);
   const [packsCatalog, setPacksCatalog] = useState([]);
   const [cardStats, setCardStats] = useState({}); // Сюди будемо зберігати лічильники ліміток
@@ -388,6 +400,7 @@ export default function App() {
     const unsubSettings = onSnapshot(settingsRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
+        setBosses(data.bosses || DEFAULT_BOSSES);
         setCardsCatalog(data.cards || []);
         setPacksCatalog(data.packs || DEFAULT_PACKS);
         setRarities(data.rarities || DEFAULT_RARITIES);
@@ -1284,6 +1297,9 @@ export default function App() {
               <div className="hidden md:block text-left">
                 <div className="font-bold text-sm leading-tight text-white flex items-center gap-1">
                     {profile?.nickname}
+                    <span className="bg-red-900/50 text-red-400 text-[10px] px-1.5 py-0.5 rounded-md border border-red-800 flex items-center gap-0.5 ml-1" title="Рівень Фарму">
+                        <Swords size={10} /> {profile?.farmLevel || 1}
+                    </span>
                 </div>
                 <div className="text-xs text-neutral-400 leading-tight">
                     {isPremiumActive ? <span className="text-fuchsia-400 font-bold">Преміум</span> : "Профіль"}
@@ -1341,6 +1357,7 @@ export default function App() {
             cardsCatalog={cardsCatalog}
             rarities={rarities}
             showToast={showToast}
+            bosses={bosses}
           />
         )}
         {currentView === "shop" && (
@@ -1477,6 +1494,8 @@ export default function App() {
             premiumShopItems={premiumShopItems}
             setViewingPlayerProfile={setViewingPlayerProfile}
             setCurrentView={setCurrentView}
+            bosses={bosses}
+            setBosses={setBosses}
           />
         )}
       </main>
@@ -1652,6 +1671,9 @@ function ProfileView({ profile, user, db, appId, handleLogout, showToast, invent
                 
                 <h2 className="text-3xl font-black text-white mb-1 relative z-10 flex justify-center items-center gap-2">
                     {profile?.nickname}
+                    <span className="bg-red-600/20 text-red-400 text-sm px-2 py-1 rounded-xl border border-red-500/50 flex items-center gap-1" title="Ваш рівень Фарму">
+                        <Swords size={16} /> {profile?.farmLevel || 1}
+                    </span>
                     {isPremiumActive && <Gem size={18} className="text-fuchsia-400 fill-fuchsia-400" title="Преміум Гравець" />}
                 </h2>
                 <div className="text-neutral-500 text-sm flex justify-center gap-4 mt-2 mb-6">
@@ -2886,8 +2908,11 @@ function RatingView({ db, appId, currentUid, setViewingPlayerProfile }) {
                 <div className="min-w-0">
                   <div className="font-bold text-white flex items-center gap-2 text-base sm:text-lg truncate">
                     {leader.nickname} 
+                    <span className="bg-red-900/40 text-red-400 text-xs px-2 py-0.5 rounded-lg border border-red-800 flex items-center gap-1 shrink-0" title={`Рівень мисливця: ${leader.farmLevel || 1}`}>
+                        <Swords size={12} /> {leader.farmLevel || 1}
+                    </span>
                     {leader.isBanned && <Ban size={14} className="text-red-600 shrink-0" title="Забанений" />}
-                    {leader.uid === currentUid && <span className="text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded-full ml-2 shrink-0">ВИ</span>}
+                    {leader.uid === currentUid && <span className="text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded-full shrink-0">ВИ</span>}
                   </div>
                 </div>
               </div>
@@ -3023,6 +3048,9 @@ function PublicProfileView({ cardStats, db, appId, targetUid, goBack, cardsCatal
         
         <h2 className="text-3xl font-black text-white mb-1 relative z-10 flex justify-center items-center gap-2">
             {playerInfo.nickname}
+            <span className="bg-red-600/20 text-red-400 text-sm px-2 py-1 rounded-xl border border-red-500/50 flex items-center gap-1" title="Рівень мисливця">
+                <Swords size={16} /> {playerInfo.farmLevel || 1}
+            </span>
             {isPlayerPremium && <Gem size={18} className="text-fuchsia-400 fill-fuchsia-400" title="Преміум Гравець" />}
             {playerInfo.isBanned && <span className="text-[10px] bg-red-900/50 text-red-400 px-2 py-1 rounded-full uppercase tracking-widest border border-red-800">Бан</span>}
         </h2>
@@ -3170,10 +3198,11 @@ function PublicProfileView({ cardStats, db, appId, targetUid, goBack, cardsCatal
 }
 
 // --- АДМІН ПАНЕЛЬ ---
-function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rarities, showToast, addSystemLog, dailyRewards, premiumDailyRewards, premiumPrice, premiumDurationDays, premiumShopItems, setViewingPlayerProfile, setCurrentView }) {
+function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rarities, showToast, addSystemLog, dailyRewards, premiumDailyRewards, premiumPrice, premiumDurationDays, premiumShopItems, setViewingPlayerProfile, setCurrentView, bosses, setBosses }) {
   const [activeTab, setActiveTab] = useState("users");
   const [allUsers, setAllUsers] = useState([]);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [adminSetFarmLevel, setAdminSetFarmLevel] = useState("");
   
   const [viewingUser, setViewingUser] = useState(null);
   const [userInventory, setUserInventory] = useState([]);
@@ -3321,6 +3350,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
     if(u) {
         setAdminSetCoinsAmount(u.coins || 0);
         setAdminNewNickname(u.nickname || "");
+        setAdminSetFarmLevel(u.farmLevel || 1);
     }
     try {
       const invRef = collection(db, "artifacts", appId, "users", uid, "inventory");
@@ -3494,6 +3524,27 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
     }
   };
 
+  const setPlayerFarmLevel = async () => {
+    const val = parseInt(adminSetFarmLevel, 10);
+    if (isNaN(val) || val < 1) return;
+    try {
+        // Змінюємо рівень
+        const profileRef = doc(db, "artifacts", appId, "public", "data", "profiles", viewingUser.uid);
+        await updateDoc(profileRef, { farmLevel: val });
+        
+        // Скидаємо прогрес арени, щоб бос нового рівня з'явився свіжим
+        const farmRef = doc(db, "artifacts", appId, "users", viewingUser.uid, "farmState", "main");
+        await setDoc(farmRef, { bossId: null, currentHp: null, pendingCoins: 0, cooldownUntil: null }, { merge: true });
+
+        showToast(`Рівень Фарму змінено на ${val}`, "success");
+        addSystemLog("Адмін", `Встановлено рівень фарму ${val} гравцю ${viewingUser.nickname}`);
+        setViewingUser(prev => ({...prev, farmLevel: val}));
+    } catch (e) {
+        console.error(e);
+        showToast("Помилка встановлення рівня.", "error");
+    }
+  };
+
   const removeCardFromUser = async (cardId, currentAmount) => {
     if (!confirm("Відібрати 1 таку картку в гравця?")) return;
     try {
@@ -3519,6 +3570,75 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
       showToast("Помилка під час вилучення.", "error");
     }
   };
+
+// --- СТАНИ ДЛЯ БОСІВ ---
+    const [newBoss, setNewBoss] = useState({
+        id: null,
+        level: (bosses?.length || 0) + 1,
+        cardId: cardsCatalog?.[0]?.id || "",
+        maxHp: 1000,
+        damagePerClick: 10,
+        rewardPerClick: 2,
+        killBonus: 500,
+        cooldownHours: 4
+    });
+
+    const resetBossForm = () => setNewBoss({
+        id: null, level: (bosses?.length || 0) + 1, cardId: cardsCatalog?.[0]?.id || "", maxHp: 1000, damagePerClick: 10, rewardPerClick: 2, killBonus: 500, cooldownHours: 4
+    });
+
+    const handleAddBoss = async (e) => {
+            e.preventDefault();
+            if (!newBoss.cardId) return showToast("Виберіть картку!", "error");
+
+            const bossData = {
+                id: newBoss.id || `boss_${Date.now()}`,
+                level: Number(newBoss.level),
+                cardId: newBoss.cardId,
+                maxHp: Number(newBoss.maxHp),
+                damagePerClick: Number(newBoss.damagePerClick),
+                rewardPerClick: Number(newBoss.rewardPerClick),
+                killBonus: Number(newBoss.killBonus),
+                cooldownHours: Number(newBoss.cooldownHours)
+            };
+
+            let updatedBosses;
+            if (newBoss.id) {
+                updatedBosses = bosses.map(b => b.id === newBoss.id ? bossData : b).sort((a, b) => a.level - b.level);
+            } else {
+                updatedBosses = [...(bosses || []), bossData].sort((a, b) => a.level - b.level);
+            }
+
+            try {
+                setIsSyncing(true);
+                const settingsRef = doc(db, "artifacts", appId, "public", "data", "gameSettings", "main");
+                await updateDoc(settingsRef, { bosses: updatedBosses });
+                setBosses(updatedBosses);
+                showToast(newBoss.id ? "Боса оновлено!" : `Боса ${bossData.level} рівня додано!`, "success");
+                resetBossForm();
+            } catch (error) {
+                console.error(error);
+                showToast("Помилка збереження боса", "error");
+            }
+            setIsSyncing(false);
+        };
+
+
+    const handleDeleteBoss = async (bossId) => {
+        if (!confirm("Ви впевнені, що хочете видалити цього боса?")) return;
+        const updatedBosses = bosses.filter(b => b.id !== bossId);
+        try {
+            setIsSyncing(true);
+            const settingsRef = doc(db, "artifacts", appId, "public", "data", "gameSettings", "main");
+            await updateDoc(settingsRef, { bosses: updatedBosses });
+            setBosses(updatedBosses);
+            showToast("Боса успішно видалено", "success");
+        } catch (error) {
+            console.error(error);
+            showToast("Помилка видалення", "error");
+        }
+        setIsSyncing(false);
+    };
 
   const handlePremiumAction = async (e, action) => {
       e.preventDefault();
@@ -3861,6 +3981,9 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
         <button onClick={() => setActiveTab("cards")} className={`flex-1 min-w-[100px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === "cards" ? "bg-purple-600 text-white" : "text-neutral-400 hover:bg-neutral-800"}`}><LayoutGrid size={18} /> Картки</button>
         {currentProfile.isAdmin && (
             <>
+                <button onClick={() => setActiveTab("bosses")} className={`whitespace-nowrap flex items-center gap-2 px-4 py-2 sm:py-3 rounded-xl font-bold transition-all text-sm sm:text-base ${activeTab === "bosses" ? "bg-red-600/20 text-red-500 border border-red-500/50" : "bg-neutral-900 border border-neutral-800 text-neutral-400 hover:text-white"}`}>
+            <Swords size={18} /> Боси
+        </button>
                 <button onClick={() => setActiveTab("promos")} className={`flex-1 min-w-[100px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === "promos" ? "bg-purple-600 text-white" : "text-neutral-400 hover:bg-neutral-800"}`}><Ticket size={18} /> Коди</button>
                 <button onClick={() => setActiveTab("premiumShop")} className={`flex-1 min-w-[100px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === "premiumShop" ? "bg-fuchsia-600 text-white" : "text-fuchsia-400/70 hover:bg-neutral-800"}`}><Gem size={18} /> Прем Товари</button>
                 <button onClick={() => setActiveTab("settings")} className={`flex-1 min-w-[100px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === "settings" ? "bg-purple-600 text-white" : "text-neutral-400 hover:bg-neutral-800"}`}><Settings size={18} /> Налаштування</button>
@@ -3889,7 +4012,7 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                   </button>
               </div>
           )}
-
+      
           {viewingUser ? (
             <div className="animate-in fade-in slide-in-from-right-4">
               <button onClick={() => setViewingUser(null)} className="mb-4 text-neutral-400 hover:text-white flex items-center gap-2 font-bold"><ArrowLeft size={18}/> Назад до списку</button>
@@ -3929,6 +4052,16 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
                     </div>
                     <button onClick={setExactCoinsToUser} className="bg-yellow-600 hover:bg-yellow-500 text-yellow-950 font-bold px-4 py-2 rounded-lg w-full transition-colors h-10">
                         Встановити
+                    </button>
+                </div>
+
+                <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 flex-1 flex flex-col gap-3 justify-end">
+                    <div>
+                        <label className="text-xs text-neutral-400 font-bold mb-1 block">Рівень Босів (Фарм):</label>
+                        <input type="number" min="1" value={adminSetFarmLevel} onChange={(e) => setAdminSetFarmLevel(e.target.value)} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-white outline-none focus:border-red-500" />
+                    </div>
+                    <button onClick={setPlayerFarmLevel} className="bg-red-600 hover:bg-red-500 text-white font-bold px-4 py-2 rounded-lg w-full transition-colors h-10">
+                        Встановити рівень
                     </button>
                 </div>
 
@@ -4110,7 +4243,91 @@ function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rari
              </form>
          </div>
       )}
+      {/* --- Вкладка: БОСИ --- */}
+          {activeTab === "bosses" && currentProfile.isAdmin && (
+            <div className="space-y-6 animate-in fade-in">
+                <h2 className="text-2xl font-black text-white uppercase tracking-widest flex items-center gap-2 mb-6">
+                    <Swords className="text-red-500" /> Налаштування Босів
+                </h2>
 
+                {/* Форма створення Боса */}
+                <form onSubmit={handleAddBoss} className="bg-neutral-900 border border-red-900/50 p-6 rounded-2xl grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                    <div>
+                        <label className="block text-xs text-neutral-500 uppercase font-bold mb-1">Рівень Боса</label>
+                        <input type="number" required value={newBoss.level} onChange={e => setNewBoss({...newBoss, level: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500" />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-neutral-500 uppercase font-bold mb-1">Картка (Обмеження: Звичайна-Рідкісна)</label>
+                        <select required value={newBoss.cardId} onChange={e => setNewBoss({...newBoss, cardId: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500">
+                            {cardsCatalog.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs text-neutral-500 uppercase font-bold mb-1">Здоров'я (Max HP)</label>
+                        <input type="number" required value={newBoss.maxHp} onChange={e => setNewBoss({...newBoss, maxHp: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500" />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-neutral-500 uppercase font-bold mb-1">Урон від 1 кліку гравця</label>
+                        <input type="number" required value={newBoss.damagePerClick} onChange={e => setNewBoss({...newBoss, damagePerClick: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500" title="Скільки ХП знімає один тап (наприклад, 10)" />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-neutral-500 uppercase font-bold mb-1">Монет за 1 клік</label>
+                        <input type="number" required value={newBoss.rewardPerClick} onChange={e => setNewBoss({...newBoss, rewardPerClick: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500" />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-neutral-500 uppercase font-bold mb-1">Бонус за вбивство</label>
+                        <input type="number" required value={newBoss.killBonus} onChange={e => setNewBoss({...newBoss, killBonus: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500" />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-neutral-500 uppercase font-bold mb-1">Кулдаун (Годин)</label>
+                        <input type="number" required step="0.5" value={newBoss.cooldownHours} onChange={e => setNewBoss({...newBoss, cooldownHours: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500" />
+                    </div>
+                    
+                <div className="sm:col-span-2 md:col-span-3 flex items-end gap-2">
+                    <button type="submit" disabled={isSyncing} className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 px-6 rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                        {isSyncing ? <Loader2 size={20} className="animate-spin" /> : <Swords size={20} />} 
+                        {newBoss.id ? "Зберегти зміни" : "Додати Боса"}
+                    </button>
+                    {newBoss.id && (
+                        <button type="button" onClick={resetBossForm} className="bg-neutral-800 hover:bg-neutral-700 text-white font-bold py-3 px-6 rounded-xl transition-colors">
+                            Скасувати
+                        </button>
+                    )}
+                </div>
+                </form>
+
+                {/* Список існуючих Босів */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
+                    {[...(bosses || [])].sort((a, b) => a.level - b.level).map((boss) => {
+                        const bCard = cardsCatalog.find(c => c.id === boss.cardId);
+                        return (
+                            <div key={boss.id} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 flex gap-4 relative overflow-hidden group">
+                                <div className="w-20 aspect-[2/3] rounded-lg border border-neutral-700 overflow-hidden flex-shrink-0 relative">
+                                    {bCard && <img src={bCard.image} alt="boss" className="w-full h-full object-cover" />}
+                                    <div className="absolute top-0 left-0 w-full bg-black/80 text-center text-[10px] font-black text-red-500 py-0.5">LVL {boss.level}</div>
+                                </div>
+                                <div className="flex-1">
+                                    <h4 className="text-white font-black text-lg">{bCard?.name || "Невідомо"}</h4>
+                                    <div className="grid grid-cols-2 gap-x-2 gap-y-1 mt-2 text-xs text-neutral-400">
+                                        <div>HP: <span className="text-white">{boss.maxHp}</span></div>
+                                        <div>Урон: <span className="text-red-400">-{boss.damagePerClick}</span></div>
+                                        <div>За тап: <span className="text-yellow-500">+{boss.rewardPerClick} 🪙</span></div>
+                                        <div>Бонус: <span className="text-yellow-500">+{boss.killBonus} 🪙</span></div>
+                                        <div className="col-span-2">Кулдаун: <span className="text-blue-400">{boss.cooldownHours} год.</span></div>
+                                    </div>
+                                </div>
+                                <button onClick={() => { setNewBoss(boss); window.scrollTo({top: 0, behavior: 'smooth'}); }} className="absolute top-3 right-10 text-neutral-500 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100">
+                                <Edit size={18} />
+                                </button>
+                                <button onClick={() => handleDeleteBoss(boss.id)} className="absolute top-3 right-3 text-neutral-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                                    <Trash2 size={18} />
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+          )}
       {/* --- Вкладка: ТОВАРИ ПРЕМІУМ МАГАЗИНУ --- */}
       {activeTab === "premiumShop" && currentProfile.isAdmin && (
           <div className="space-y-6 animate-in fade-in">
