@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Swords, Coins, Zap, Loader2, Timer } from "lucide-react";
-import { doc, getDoc, setDoc, updateDoc, increment } from "firebase/firestore";
+// Додано writeBatch для створення транзакцій!
+import { doc, getDoc, setDoc, updateDoc, increment, writeBatch } from "firebase/firestore";
 
 export default function FarmView({ profile, db, appId, cardsCatalog, showToast, bosses }) {
     const playerLevel = profile?.farmLevel || 1;
@@ -25,11 +26,11 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
 
     const isLoadedRef = useRef(false);
     
-    // Трюк для збереження при перемиканні вкладок
-    const stateRef = useRef({ hp, tempCoins, bossId: currentBoss?.id, playerUid: profile?.uid, cdEnd: cooldownEnd });
+    // Трюк для збереження при перемиканні вкладок (додали isProcessing)
+    const stateRef = useRef({ hp, tempCoins, bossId: currentBoss?.id, playerUid: profile?.uid, cdEnd: cooldownEnd, isProcessing });
     useEffect(() => {
-        stateRef.current = { hp, tempCoins, bossId: currentBoss?.id, playerUid: profile?.uid, cdEnd: cooldownEnd };
-    }, [hp, tempCoins, currentBoss, profile, cooldownEnd]);
+        stateRef.current = { hp, tempCoins, bossId: currentBoss?.id, playerUid: profile?.uid, cdEnd: cooldownEnd, isProcessing };
+    }, [hp, tempCoins, currentBoss, profile, cooldownEnd, isProcessing]);
 
     // ЗАВАНТАЖЕННЯ ЗІ ЗБЕРЕЖЕННЯ ТА ПЕРЕВІРКА КД
     useEffect(() => {
@@ -93,14 +94,14 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
         return () => clearInterval(interval);
     }, [cooldownEnd, currentBoss]);
 
-    // НАДІЙНЕ АВТОЗБЕРЕЖЕННЯ (ФІКС ВІДКАТУ БАГУ)
+    // НАДІЙНЕ АВТОЗБЕРЕЖЕННЯ (ФІКС ВІДКАТУ БАГУ ТА ДЮПУ)
     useEffect(() => {
         if (!profile || !currentBoss) return;
 
-        // Зберігаємо кожну секунду в фоні, НЕ скидаючи таймер від кліків
         const saveInterval = setInterval(() => {
-            const { hp: currentHp, tempCoins: currentCoins, bossId, playerUid, cdEnd } = stateRef.current;
-            if (isLoadedRef.current && !cdEnd) {
+            const { hp: currentHp, tempCoins: currentCoins, bossId, playerUid, cdEnd, isProcessing: currentIsProcessing } = stateRef.current;
+            // НЕ зберігаємо, якщо йде процес відправки монет (щоб не перезаписати нулі старим значенням)
+            if (isLoadedRef.current && !cdEnd && !currentIsProcessing) {
                 const farmRef = doc(db, "artifacts", appId, "users", playerUid, "farmState", "main");
                 setDoc(farmRef, { 
                     bossId, 
@@ -111,11 +112,10 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
             }
         }, 1000);
 
-        // Фінальне збереження при натисканні на іншу вкладку меню
         return () => {
             clearInterval(saveInterval);
-            const { hp: finalHp, tempCoins: finalCoins, bossId: finalBossId, playerUid: finalUid, cdEnd: finalCdEnd } = stateRef.current;
-            if (finalUid && isLoadedRef.current && !finalCdEnd) { 
+            const { hp: finalHp, tempCoins: finalCoins, bossId: finalBossId, playerUid: finalUid, cdEnd: finalCdEnd, isProcessing: finalIsProcessing } = stateRef.current;
+            if (finalUid && isLoadedRef.current && !finalCdEnd && !finalIsProcessing) { 
                 const farmRef = doc(db, "artifacts", appId, "users", finalUid, "farmState", "main");
                 setDoc(farmRef, { 
                     bossId: finalBossId, 
@@ -125,11 +125,12 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
                 }, { merge: true }).catch(() => {});
             }
         };
-    }, [db, appId, profile, currentBoss]); // Залежності змінені: більше не залежить від hp, щоб не скидати інтервал
+    }, [db, appId, profile, currentBoss]);
 
     // УДАР ПО БОСУ
     const handleHit = () => {
-        if (hp <= 0 || cooldownEnd) return; 
+        // Блокуємо удари, якщо йде відправка на сервер (захист від накрутки)
+        if (hp <= 0 || cooldownEnd || isProcessing) return; 
         
         setIsHit(true);
         setTimeout(() => setIsHit(false), 100);
@@ -145,37 +146,50 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
         }
     };
 
-    // ФУНКЦІЯ ПЕРЕКАЗУ В ГАМАНЕЦЬ ТА ЗАПУСК КД
+    // ФУНКЦІЯ ПЕРЕКАЗУ В ГАМАНЕЦЬ ТА ЗАПУСК КД (ТРАНЗАКЦІЯ)
     const claimRewards = async () => {
         if (tempCoins === 0 || isProcessing || !profile) return;
         setIsProcessing(true);
         
         try {
             const isLevelUp = hp <= 0;
-            let updates = { coins: increment(tempCoins) };
+            const earned = tempCoins; // Запам'ятовуємо суму для повідомлення
             
-            if (isLevelUp) updates.farmLevel = playerLevel + 1; 
-
-            // Додаємо монети на баланс
+            // ВИКОРИСТОВУЄМО BATCH ДЛЯ АБСОЛЮТНОЇ СИНХРОННОСТІ (ТРАНЗАКЦІЯ)
+            const batch = writeBatch(db);
+            
+            // 1. Додаємо монети на баланс профілю
             const profileRef = doc(db, "artifacts", appId, "public", "data", "profiles", profile.uid);
-            await updateDoc(profileRef, updates);
+            let profileUpdates = { coins: increment(earned) };
+            if (isLevelUp) profileUpdates.farmLevel = playerLevel + 1; 
+            batch.update(profileRef, profileUpdates);
 
-            // Очищаємо "Мішок"
+            // 2. Очищаємо "Мішок" на фермі
             const farmRef = doc(db, "artifacts", appId, "users", profile.uid, "farmState", "main");
             if (isLevelUp) {
                 const cdHours = currentBoss?.cooldownHours || 4;
                 const cdUntil = new Date(Date.now() + cdHours * 60 * 60 * 1000).toISOString();
-                
-                await setDoc(farmRef, { bossId: null, currentHp: null, pendingCoins: 0, cooldownUntil: cdUntil }, { merge: true });
-                setTempCoins(0);
-                setCooldownEnd(cdUntil);
+                batch.set(farmRef, { bossId: null, currentHp: null, pendingCoins: 0, cooldownUntil: cdUntil }, { merge: true });
+                setCooldownEnd(cdUntil); // Одразу покажемо екран таймера
+            } else {
+                batch.set(farmRef, { bossId: currentBoss.id, currentHp: hp, pendingCoins: 0, lastUpdated: new Date().toISOString() }, { merge: true });
+            }
+
+            // 3. Відправляємо обидва запити одночасно! Якщо інтернет порветься, не виконається жоден
+            await batch.commit();
+
+            // 4. Очищаємо локальний стейт ТІЛЬКИ ПІСЛЯ успішного збереження в БД
+            setTempCoins(0);
+
+            if (isLevelUp) {
                 showToast(`Боса подолано! Рівень підвищено до ${playerLevel + 1}!`, "success");
             } else {
-                await setDoc(farmRef, { bossId: currentBoss.id, currentHp: hp, pendingCoins: 0, lastUpdated: new Date().toISOString() }, { merge: true });
-                showToast(`Ви успішно забрали ${tempCoins} монет!`, "success");
-                setTempCoins(0);
+                showToast(`Ви успішно забрали ${earned} монет!`, "success");
             }
-        } catch (error) { showToast("Помилка сервера", "error"); }
+        } catch (error) { 
+            console.error("Помилка claimRewards:", error);
+            showToast("Помилка сервера. Спробуйте ще раз.", "error"); 
+        }
         setIsProcessing(false);
     };
 
