@@ -35,3 +35,26 @@ export const getCardStyle = (rName, raritiesList) => {
   const r = raritiesList?.find((x) => x.name === rName);
   return r && COLOR_PRESETS[r.color] ? COLOR_PRESETS[r.color] : COLOR_PRESETS["gray"];
 };
+
+// --- ГЛОБАЛЬНИЙ ГОДИННИК ---
+// Запитує незалежний світовий час. Має захист (таймаут 3 сек), 
+// щоб гра не зависла, якщо сервер часу раптом ляже.
+export const getGlobalTime = async () => {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
+        const timeRes = await fetch("https://worldtimeapi.org/api/timezone/Etc/UTC", {
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        if (timeRes.ok) {
+            const timeData = await timeRes.json();
+            return new Date(timeData.utc_datetime);
+        }
+    } catch (e) {
+        console.warn("Світовий час недоступний, використовуємо резервний (локальний).");
+    }
+    return new Date(); // Фолбек
+};

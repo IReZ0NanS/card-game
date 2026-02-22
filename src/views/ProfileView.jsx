@@ -1,8 +1,8 @@
 import React, { useState, useRef } from "react";
 import { doc, updateDoc, increment, getDoc, collection, writeBatch } from "firebase/firestore";
 import { Gift, Ticket, Settings, LogOut, CalendarDays, Coins, LayoutGrid, PackageOpen, Zap, Star, Gem, Swords } from "lucide-react";
-import { formatDate, getCardStyle } from "../utils/helpers";
 import PlayerAvatar from "../components/PlayerAvatar";
+import { formatDate, getCardStyle, getGlobalTime } from "../utils/helpers";
 
 export default function ProfileView({ profile, user, db, appId, handleLogout, showToast, inventoryCount, canClaimDaily, dailyRewards, premiumDailyRewards, isPremiumActive, showcases, cardsCatalog, rarities, fullInventory, setViewingCard, cardStats }) {
     const [avatarInput, setAvatarInput] = useState("");
@@ -26,25 +26,22 @@ export default function ProfileView({ profile, user, db, appId, handleLogout, sh
         }
     }
 
-    const claimDaily = async () => {
+const claimDaily = async () => {
         if (actionLock.current || isProcessing || !canClaimDaily) return;
         
         actionLock.current = true;
         setIsProcessing(true);
         try {
-            let serverDate = new Date();
-            try {
-                const timeRes = await fetch("https://worldtimeapi.org/api/timezone/Etc/UTC");
-                if (timeRes.ok) {
-                    const timeData = await timeRes.json();
-                    serverDate = new Date(timeData.utc_datetime);
-                }
-            } catch (e) { /* Fallback */ }
+            // ⏱️ Отримуємо РЕАЛЬНИЙ світовий час
+            const serverDate = await getGlobalTime();
 
             if (profile.lastDailyClaim) {
                 const last = new Date(profile.lastDailyClaim);
+                // Перевіряємо за світовим днем, а не за днем на комп'ютері гравця
                 if (last.getDate() === serverDate.getDate() && last.getMonth() === serverDate.getMonth() && last.getFullYear() === serverDate.getFullYear()) {
                     showToast("Ви вже забирали нагороду сьогодні.", "error");
+                    actionLock.current = false;
+                    setIsProcessing(false);
                     return;
                 }
             }
@@ -57,7 +54,7 @@ export default function ProfileView({ profile, user, db, appId, handleLogout, sh
             const newStreak = streak + 1;
             await updateDoc(doc(db, "artifacts", appId, "public", "data", "profiles", user.uid), {
                 coins: increment(reward),
-                lastDailyClaim: serverDate.toISOString(),
+                lastDailyClaim: serverDate.toISOString(), // Записуємо серверний час у базу!
                 dailyStreak: newStreak
             });
             showToast(`Мій лорд, Ви отримали щоденну нагороду: ${reward} монет!`, "success");

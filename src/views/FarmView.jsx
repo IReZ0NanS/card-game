@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Swords, Coins, Zap, Loader2, Timer, Lock, Unlock, Skull } from "lucide-react";
 import { doc, getDoc, setDoc, increment, runTransaction } from "firebase/firestore";
+import { getGlobalTime } from "../utils/helpers";
 
 // 🏆 ГЛОБАЛЬНИЙ КЕШ
 let globalFarmCache = {
@@ -195,6 +196,7 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
         }
     };
 
+    // 🛡️ АБСОЛЮТНО БЕЗПЕЧНА ТРАНЗАКЦІЯ З СЕРВЕРНИМ ЧАСОМ
     const claimRewards = async () => {
         if (actionLock.current || hp > 0 || isProcessing || !profile) return;
         
@@ -202,6 +204,19 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
         setIsProcessing(true);
 
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+
+        // ⏱️ 1. ОТРИМУЄМО РЕАЛЬНИЙ ЧАС ІЗ НЕЗАЛЕЖНОГО СЕРВЕРА
+        let trueNow = new Date();
+        try {
+            // Замість купи коду з fetch, просто пишемо:
+            const trueNow = await getGlobalTime();
+            if (timeRes.ok) {
+                const timeData = await timeRes.json();
+                trueNow = new Date(timeData.utc_datetime);
+            }
+        } catch (e) { 
+            console.warn("Не вдалося отримати час сервера, використовуємо локальний"); 
+        }
 
         try {
             await runTransaction(db, async (t) => {
@@ -211,7 +226,8 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
                 const farmSnap = await t.get(farmRef);
                 const farmData = farmSnap.exists() ? farmSnap.data() : {};
 
-                if (farmData.cooldownUntil && new Date(farmData.cooldownUntil) > new Date()) {
+                // 2. ПЕРЕВІРКА КУЛДАУНУ ЗА РЕАЛЬНИМ ЧАСОМ (trueNow)
+                if (farmData.cooldownUntil && new Date(farmData.cooldownUntil) > trueNow) {
                     throw new Error("Нагороду вже забрано!");
                 }
 
@@ -225,13 +241,14 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
                 });
 
                 const cdHours = currentBoss.cooldownHours || 4;
-                const cdUntil = new Date(Date.now() + cdHours * 60 * 60 * 1000).toISOString();
+                // 3. РОЗРАХОВУЄМО НАСТУПНИЙ КУЛДАУН ТЕЖ ВІД РЕАЛЬНОГО ЧАСУ
+                const cdUntil = new Date(trueNow.getTime() + cdHours * 60 * 60 * 1000).toISOString();
 
                 t.set(farmRef, {
                     bossId: currentBoss.id,
                     currentHp: currentBoss.maxHp, 
                     cooldownUntil: cdUntil,
-                    lastUpdated: new Date().toISOString()
+                    lastUpdated: trueNow.toISOString()
                 }, { merge: true });
 
                 return { totalReward, isLevelUp, cdUntil };
@@ -250,10 +267,10 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
 
         } catch (error) { 
             console.error("Transaction Error:", error);
-            showToast("Ви вже забрали цей скарб!", "error"); 
+            showToast("Ви вже забрали цей скарб або кулдаун ще не минув!", "error"); 
             if (error.message === "Нагороду вже забрано!") {
                 const cdHours = currentBoss.cooldownHours || 4;
-                const cdTime = new Date(Date.now() + cdHours * 60 * 60 * 1000).toISOString();
+                const cdTime = new Date(trueNow.getTime() + cdHours * 60 * 60 * 1000).toISOString();
                 setCooldownEnd(cdTime);
                 globalFarmCache.cooldownEnd = cdTime;
                 localStorage.removeItem(`farm_${profile.uid}_${currentBoss.id}`);

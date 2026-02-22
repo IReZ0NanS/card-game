@@ -6,6 +6,7 @@ import {
 import { onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { doc, setDoc, collection, onSnapshot, updateDoc, getDocs, getDoc, query, where, writeBatch, increment, deleteDoc } from "firebase/firestore";
 
+import { getGlobalTime } from "./utils/helpers";
 import { auth, db, GAME_ID } from "./config/firebase";
 import { DEFAULT_PACKS, DEFAULT_BOSSES, DEFAULT_RARITIES, SELL_PRICE } from "./config/constants";
 import { isToday } from "./utils/helpers";
@@ -147,7 +148,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  useEffect(() => {
+useEffect(() => {
     if (!user) return;
     const settingsRef = doc(db, "artifacts", GAME_ID, "public", "data", "gameSettings", "main");
     const unsubSettings = onSnapshot(settingsRef, (snap) => {
@@ -165,49 +166,52 @@ export default function App() {
       }
     }, (err) => { setDbError("Помилка доступу до бази."); setLoading(false); });
 
+    // 🔥 ОСЬ ЦЕЙ РЯДОК БУВ ВТРАЧЕНИЙ: Вказуємо шлях до профілю гравця
     const profileRef = doc(db, "artifacts", GAME_ID, "public", "data", "profiles", user.uid);
-    const unsubProfile = onSnapshot(profileRef, (docSnap) => {
+
+    const unsubProfile = onSnapshot(profileRef, async (docSnap) => {
       if (docSnap.exists()) {
         const pData = docSnap.data();
         let needsUpdate = false;
-        let updates = {}; // Створюємо порожній об'єкт для оновлень
+        let updates = {};
 
-        // Перевіряємо, чи не сплив час бану
+        // ⏱️ Отримуємо РЕАЛЬНИЙ час для перевірки Бану та Преміуму
+        const realTime = await getGlobalTime();
+        const nowMs = realTime.getTime();
+
         if (pData.isBanned && pData.banUntil) {
-          if (new Date().getTime() > new Date(pData.banUntil).getTime()) {
+          if (nowMs > new Date(pData.banUntil).getTime()) {
              updates.isBanned = false; 
              updates.banReason = null; 
              updates.banUntil = null; 
              needsUpdate = true;
              
-             // Оновлюємо локальні дані одразу, щоб не чекати сервер
              pData.isBanned = false;
              pData.banReason = null;
              pData.banUntil = null;
           }
         }
         
-        // Перевіряємо, чи не сплив час преміуму
         if (pData.isPremium && pData.premiumUntil) {
-            if (new Date().getTime() > new Date(pData.premiumUntil).getTime()) {
+            if (nowMs > new Date(pData.premiumUntil).getTime()) {
                 updates.isPremium = false; 
                 updates.premiumUntil = null; 
                 needsUpdate = true;
                 
-                // Оновлюємо локальні дані
                 pData.isPremium = false;
                 pData.premiumUntil = null;
             }
         }
         
-        // Відправляємо в базу ТІЛЬКИ ті поля, які дійсно змінилися (і без undefined!)
         if (needsUpdate) {
-            updateDoc(profileRef, updates).catch(e => console.error("Помилка фонового оновлення профілю:", e));
+            updateDoc(profileRef, updates).catch(e => console.error("Помилка фонового оновлення:", e));
         }
         
         setProfile(pData);
         setNeedsRegistration(false);
-      } else { setNeedsRegistration(true); }
+      } else { 
+        setNeedsRegistration(true); 
+      }
       setLoading(false);
     });
 
