@@ -170,17 +170,41 @@ export default function App() {
       if (docSnap.exists()) {
         const pData = docSnap.data();
         let needsUpdate = false;
+        let updates = {}; // Створюємо порожній об'єкт для оновлень
+
+        // Перевіряємо, чи не сплив час бану
         if (pData.isBanned && pData.banUntil) {
           if (new Date().getTime() > new Date(pData.banUntil).getTime()) {
-             pData.isBanned = false; pData.banReason = null; pData.banUntil = null; needsUpdate = true;
+             updates.isBanned = false; 
+             updates.banReason = null; 
+             updates.banUntil = null; 
+             needsUpdate = true;
+             
+             // Оновлюємо локальні дані одразу, щоб не чекати сервер
+             pData.isBanned = false;
+             pData.banReason = null;
+             pData.banUntil = null;
           }
         }
+        
+        // Перевіряємо, чи не сплив час преміуму
         if (pData.isPremium && pData.premiumUntil) {
             if (new Date().getTime() > new Date(pData.premiumUntil).getTime()) {
-                pData.isPremium = false; pData.premiumUntil = null; needsUpdate = true;
+                updates.isPremium = false; 
+                updates.premiumUntil = null; 
+                needsUpdate = true;
+                
+                // Оновлюємо локальні дані
+                pData.isPremium = false;
+                pData.premiumUntil = null;
             }
         }
-        if (needsUpdate) updateDoc(profileRef, { isBanned: pData.isBanned, banReason: pData.banReason, banUntil: pData.banUntil, isPremium: pData.isPremium, premiumUntil: pData.premiumUntil });
+        
+        // Відправляємо в базу ТІЛЬКИ ті поля, які дійсно змінилися (і без undefined!)
+        if (needsUpdate) {
+            updateDoc(profileRef, updates).catch(e => console.error("Помилка фонового оновлення профілю:", e));
+        }
+        
         setProfile(pData);
         setNeedsRegistration(false);
       } else { setNeedsRegistration(true); }
