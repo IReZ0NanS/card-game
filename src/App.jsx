@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Coins, PackageOpen, LayoutGrid, AlertCircle, Loader2, Mail, User,
-  CheckCircle2, Shield, KeyRound, Trophy, Store, Hexagon, Gem, Swords, Gift
+  CheckCircle2, Shield, KeyRound, Trophy, Store, Hexagon, Gem, Swords, Gift, Volume2, VolumeX
 } from "lucide-react";
 import { onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { doc, setDoc, collection, onSnapshot, updateDoc, getDocs, getDoc, query, where, writeBatch, increment, deleteDoc } from "firebase/firestore";
@@ -299,7 +299,23 @@ useEffect(() => {
     } catch (err) { setDbError("Помилка: " + err.message); }
     setLoading(false);
   };
-
+  const toggleAutoSound = async () => {
+      if (!user || actionLock.current) return;
+      actionLock.current = true;
+      try {
+          const newValue = profile?.autoSoundEnabled === false ? true : false;
+          await updateDoc(doc(db, "artifacts", GAME_ID, "public", "data", "profiles", user.uid), {
+              autoSoundEnabled: newValue
+          });
+          // За бажанням можна прибрати showToast, щоб перемикання було "тихим" без сповіщень
+          showToast(newValue ? "Автозвук увімкнено" : "Автозвук вимкнено", "success");
+      } catch (e) {
+          console.error(e);
+          showToast("Помилка збереження налаштувань звуку");
+      } finally {
+          actionLock.current = false;
+      }
+  };
   const handleGoogleAuth = async () => {
     setLoading(true); setDbError("");
     try {
@@ -722,7 +738,7 @@ useEffect(() => {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans pb-24 relative overflow-x-hidden">
-      <header className="bg-neutral-900 border-b border-neutral-800 sticky top-0 z-50 shadow-sm">
+<header className="bg-neutral-900 border-b border-neutral-800 sticky top-0 z-50 shadow-sm">
         <div className="max-w-5xl mx-auto px-4 py-3 flex justify-between items-center">
           <div className="flex items-center gap-2 sm:gap-3 text-white font-black text-lg tracking-wider cursor-pointer" onClick={() => setCurrentView("shop")}>
              <div className="bg-gradient-to-br from-purple-600 to-blue-600 p-2 rounded-xl"><Hexagon className="text-white w-5 h-5" /></div>
@@ -745,6 +761,12 @@ useEffect(() => {
                {canClaimDaily && (
                   <button onClick={() => setCurrentView("profile")} className="bg-orange-500/20 text-orange-400 p-2.5 rounded-xl border border-orange-500/30"><Gift size={20} /></button>
                )}
+
+               {/* ОСЬ ТУТ ДОДАНА НОВА КНОПКА ЗВУКУ */}
+               <button onClick={toggleAutoSound} className="bg-neutral-950 p-2.5 rounded-xl border border-neutral-800 text-neutral-400 hover:text-white transition-colors" title={profile?.autoSoundEnabled !== false ? "Вимкнути автозвук карток" : "Увімкнути автозвук карток"}>
+                   {profile?.autoSoundEnabled !== false ? <Volume2 size={20} /> : <VolumeX size={20} />}
+               </button>
+
                <div className="bg-neutral-950 px-4 py-2 rounded-xl border border-neutral-800 flex gap-2 items-center">
                  <Coins size={18} className="text-yellow-500" />
                  <span className="text-yellow-500 font-black">{profile?.coins}</span>
@@ -765,7 +787,7 @@ useEffect(() => {
 
       <main className="max-w-5xl mx-auto p-4 mt-4">
         {currentView === "farm" && <FarmView profile={profile} db={db} appId={GAME_ID} cardsCatalog={cardsCatalog} showToast={showToast} bosses={bosses} rarities={rarities} />}
-        {currentView === "shop" && <ShopView cardStats={cardStats} packs={packsCatalog} cardsCatalog={cardsCatalog} rarities={rarities} openPack={openPack} openingPackId={openingPackId} isRouletteSpinning={isRouletteSpinning} rouletteItems={rouletteItems} pulledCards={pulledCards} setPulledCards={setPulledCards} sellPulledCards={sellPulledCards} selectedPackId={selectedPackId} setSelectedPackId={setSelectedPackId} setViewingCard={setViewingCard} isPremiumActive={isPremiumActive} isAdmin={profile?.isAdmin} isProcessing={isProcessing} />}
+        {currentView === "shop" && <ShopView profile={profile} cardStats={cardStats} packs={packsCatalog} cardsCatalog={cardsCatalog} rarities={rarities} openPack={openPack} openingPackId={openingPackId} isRouletteSpinning={isRouletteSpinning} rouletteItems={rouletteItems} pulledCards={pulledCards} setPulledCards={setPulledCards} sellPulledCards={sellPulledCards} selectedPackId={selectedPackId} setSelectedPackId={setSelectedPackId} setViewingCard={setViewingCard} isPremiumActive={isPremiumActive} isAdmin={profile?.isAdmin} isProcessing={isProcessing} />}
         {currentView === "premium" && <PremiumShopView profile={profile} user={user} db={db} appId={GAME_ID} premiumPrice={premiumPrice} premiumDurationDays={premiumDurationDays} premiumShopItems={premiumShopItems} showToast={showToast} isProcessing={isProcessing} setIsProcessing={setIsProcessing} addSystemLog={addSystemLog} isPremiumActive={isPremiumActive} cardsCatalog={cardsCatalog} setViewingCard={setViewingCard} rarities={rarities} cardStats={cardStats} />}
         {currentView === "inventory" && <InventoryView inventory={fullInventory} rarities={rarities} catalogTotal={cardsCatalog.length} setViewingCard={setViewingCard} setListingCard={setListingCard} packsCatalog={packsCatalog} showcases={showcases} profile={profile} cardsCatalog={cardsCatalog} cardStats={cardStats} sellDuplicate={sellDuplicate} sellAllDuplicates={sellAllDuplicates} sellEveryDuplicate={sellEveryDuplicate} sellPrice={SELL_PRICE} createShowcase={createShowcase} deleteShowcase={deleteShowcase} setMainShowcase={setMainShowcase} saveShowcaseCards={saveShowcaseCards} />}
         {currentView === "market" && <MarketView marketListings={marketListings} cardsCatalog={cardsCatalog} rarities={rarities} currentUserUid={user.uid} setViewingCard={setViewingCard} isAdmin={profile?.isAdmin} buyFromMarket={buyFromMarket} cancelMarketListing={cancelMarketListing} />}

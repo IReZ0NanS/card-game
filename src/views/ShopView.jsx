@@ -3,7 +3,7 @@ import { Search, Filter, Sparkles, Coins, ArrowLeft, Gem, Loader2, Volume2 } fro
 import { getCardStyle, getCardWeight, playCardSound } from "../utils/helpers";
 import { SELL_PRICE } from "../config/constants";
 
-export default function ShopView({ packs, cardsCatalog, cardStats, rarities, openPack, openingPackId, isRouletteSpinning, rouletteItems, pulledCards, setPulledCards, sellPulledCards, selectedPackId, setSelectedPackId, setViewingCard, isAdmin, isProcessing, isPremiumActive }) {
+export default function ShopView({ profile, packs, cardsCatalog, cardStats, rarities, openPack, openingPackId, isRouletteSpinning, rouletteItems, pulledCards, setPulledCards, sellPulledCards, selectedPackId, setSelectedPackId, setViewingCard, isAdmin, isProcessing, isPremiumActive }) {
   
   const [roulettePos, setRoulettePos] = useState(0);
   const [rouletteOffset, setRouletteOffset] = useState(0);
@@ -21,16 +21,17 @@ export default function ShopView({ packs, cardsCatalog, cardStats, rarities, ope
     }
   }, [isRouletteSpinning]);
 
-  // Автоматичне відтворення звуку найрідкіснішої картки після відкриття паку
+// Автоматичне відтворення звуку найрідкіснішої картки після відкриття паку
   useEffect(() => {
-      if (pulledCards && pulledCards.length > 0) {
+      // Відтворюємо звук ТІЛЬКИ якщо гравець НЕ вимкнув цю опцію
+      if (pulledCards && pulledCards.length > 0 && profile?.autoSoundEnabled !== false) {
           const cardsWithSound = pulledCards.filter(c => c.soundUrl);
           if (cardsWithSound.length > 0) {
               cardsWithSound.sort((a,b) => getCardWeight(a.rarity, rarities) - getCardWeight(b.rarity, rarities));
               playCardSound(cardsWithSound[0].soundUrl, cardsWithSound[0].soundVolume);
           }
       }
-  }, [pulledCards, rarities]);
+  }, [pulledCards, rarities, profile?.autoSoundEnabled]); // Додали залежність
 
   if (isRouletteSpinning && rouletteItems.length > 0) {
     return (
