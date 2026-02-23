@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { collection, onSnapshot, updateDoc, doc, deleteDoc, writeBatch, getDocs, query, where, increment, setDoc } from "firebase/firestore";
 import { formatDate, getCardStyle, playCardSound } from "../utils/helpers";
-import { EFFECT_OPTIONS, SELL_PRICE } from "../config/constants";
+import { EFFECT_OPTIONS, SELL_PRICE, DROP_ANIMATIONS } from "../config/constants";
 import PlayerAvatar from "../components/PlayerAvatar";
 
 export default function AdminView({ db, appId, currentProfile, cardsCatalog, packsCatalog, rarities, showToast, addSystemLog, dailyRewards, premiumDailyRewards, premiumPrice, premiumDurationDays, premiumShopItems, setViewingPlayerProfile, setCurrentView, bosses, setBosses }) {
@@ -36,7 +36,7 @@ export default function AdminView({ db, appId, currentProfile, cardsCatalog, pac
   const [adminSetCoinsAmount, setAdminSetCoinsAmount] = useState(0);
 
   const [editingCard, setEditingCard] = useState(null);
-  const [cardForm, setCardForm] = useState({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "", soundUrl: "", soundVolume: 0.5 });
+  const [cardForm, setCardForm] = useState({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", dropAnim: "", maxSupply: "", weight: "", sellPrice: "", effect: "", soundUrl: "", soundVolume: 0.5 });
   const [editingPack, setEditingPack] = useState(null);
   const [packForm, setPackForm] = useState({ id: "", name: "", category: "Базові", cost: 50, image: "", customWeights: {}, isHidden: false, isPremiumOnly: false });
 
@@ -517,7 +517,9 @@ export default function AdminView({ db, appId, currentProfile, cardsCatalog, pac
         maxSupply: cardForm.maxSupply ? Number(cardForm.maxSupply) : 0,
         weight: cardForm.weight ? Number(cardForm.weight) : "",
         sellPrice: cardForm.sellPrice ? Number(cardForm.sellPrice) : SELL_PRICE,
-        effect: cardForm.effect || "", soundUrl: cardForm.soundUrl || "",
+        effect: cardForm.effect || "", 
+        dropAnim: cardForm.dropAnim || "", /* <-- ДОДАНО ОСЬ ЦЕ */
+        soundUrl: cardForm.soundUrl || "",
         soundVolume: cardForm.soundVolume !== undefined ? Number(cardForm.soundVolume) : 0.5,
         pulledCount: editingCard ? (editingCard.pulledCount || 0) : 0
     };
@@ -532,7 +534,7 @@ export default function AdminView({ db, appId, currentProfile, cardsCatalog, pac
     addSystemLog("Адмін", `${editingCard ? 'Оновлено' : 'Створено'} картку: ${cardForm.name}`);
     
     setEditingCard(null);
-    setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "", soundUrl: "", soundVolume: 0.5 });
+    setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", dropAnim: "",maxSupply: "", weight: "", sellPrice: "", effect: "", soundUrl: "", soundVolume: 0.5 });
     showToast("Каталог оновлено!", "success");
   };
 
@@ -1352,8 +1354,16 @@ export default function AdminView({ db, appId, currentProfile, cardsCatalog, pac
                   <input type="number" step="0.01" placeholder="Індивід. Шанс (Вага)" value={cardForm.weight} onChange={(e) => setCardForm({ ...cardForm, weight: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white" title="Якщо заповнено - ігнорує глобальний шанс рідкості" />
                   <input type="number" placeholder="Ціна продажу (замовч. 15)" value={cardForm.sellPrice} onChange={(e) => setCardForm({ ...cardForm, sellPrice: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white text-green-400" title="Скільки монет отримає гравець за дублікат" />
                   
-                  <select value={cardForm.effect} onChange={(e) => setCardForm({ ...cardForm, effect: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white md:col-span-2 text-purple-400 font-bold">
+                  <select value={cardForm.effect} onChange={(e) => setCardForm({ ...cardForm, effect: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white md:col-span-1 text-purple-400 font-bold">
                     {EFFECT_OPTIONS.map(opt => <option key={opt.id} value={opt.id}>{opt.name}</option>)}
+                  </select>
+                  
+                  <select value={cardForm.effect} onChange={(e) => setCardForm({ ...cardForm, effect: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white md:col-span-1 text-purple-400 font-bold">
+                    {EFFECT_OPTIONS.map(opt => <option key={opt.id} value={opt.id}>{opt.name}</option>)}
+                  </select>
+
+                  <select value={cardForm.dropAnim || ""} onChange={(e) => setCardForm({ ...cardForm, dropAnim: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white md:col-span-1 text-yellow-500 font-bold" title="Анімація появи після відкриття паку">
+                    {DROP_ANIMATIONS.map(opt => <option key={opt.id} value={opt.id}>{opt.name}</option>)}
                   </select>
 
                   <input type="text" placeholder="URL Картинки" value={cardForm.image} onChange={(e) => setCardForm({ ...cardForm, image: e.target.value })} className="bg-neutral-950 border border-neutral-700 rounded-xl px-4 py-3 text-white md:col-span-4" required />
@@ -1372,7 +1382,7 @@ export default function AdminView({ db, appId, currentProfile, cardsCatalog, pac
               <div className="flex gap-3">
                 <button type="submit" disabled={!cardForm.packId} className="flex-1 bg-purple-600 disabled:bg-neutral-700 text-white font-bold py-3 rounded-xl">Зберегти картку</button>
                 {editingCard && (
-                  <button type="button" onClick={() => { setEditingCard(null); setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", maxSupply: "", weight: "", sellPrice: "", effect: "", soundUrl: "", soundVolume: 0.5 }); }} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
+                  <button type="button" onClick={() => { setEditingCard(null); setCardForm({ id: "", packId: packsCatalog[0]?.id || "", name: "", rarity: rarities[0]?.name || "Звичайна", image: "", dropAnim: "",maxSupply: "", weight: "", sellPrice: "", effect: "", soundUrl: "", soundVolume: 0.5 }); }} className="bg-neutral-800 text-white font-bold py-3 px-6 rounded-xl">Скасувати</button>
                 )}
               </div>
            </form>
@@ -1414,9 +1424,9 @@ return (
                       </div>
                     )}
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 z-20">
-                      <button onClick={() => { setEditingCard(card); setCardForm({ ...card, maxSupply: card.maxSupply || "", weight: card.weight || "", sellPrice: card.sellPrice || "", effect: card.effect || "", soundUrl: card.soundUrl || "", soundVolume: card.soundVolume !== undefined ? card.soundVolume : 0.5 }); }} className="p-2 bg-blue-600 rounded-lg text-white shadow-lg transform hover:scale-110 transition-transform">
+                      <button onClick={() => { setEditingCard(card); setCardForm({ ...card, maxSupply: card.maxSupply || "", weight: card.weight || "", sellPrice: card.sellPrice || "", effect: card.effect || "", dropAnim: card.dropAnim || "", soundUrl: card.soundUrl || "", soundVolume: card.soundVolume !== undefined ? card.soundVolume : 0.5 }); }} className="p-2 bg-blue-600 rounded-lg text-white shadow-lg transform hover:scale-110 transition-transform">
                         <Edit2 size={18} />
-                      </button>
+                        </button>
                       <button onClick={() => deleteCard(card.id)} className="p-2 bg-red-600 rounded-lg text-white shadow-lg transform hover:scale-110 transition-transform">
                         <Trash2 size={18} />
                       </button>

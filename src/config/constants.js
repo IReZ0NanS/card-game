@@ -53,3 +53,10 @@ export const DEFAULT_RARITIES = [
 ];
 
 export const SELL_PRICE = 15;
+
+export const DROP_ANIMATIONS = [
+  { id: "", name: "Стандартна (За рідкістю)" },
+  { id: "flip", name: "3D Переворот (Flip)" },
+  { id: "epic", name: "Епічний удар (Epic)" },
+  { id: "flash", name: "Яскравий спалах (Flash)" }
+];

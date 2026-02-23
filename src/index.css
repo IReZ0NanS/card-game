@@ -72,3 +72,35 @@
 .preserve-3d {
   transform-style: preserve-3d;
 }
+
+/* --- АНІМАЦІЇ ВИПАДІННЯ КАРТОК --- */
+.anim-flip {
+  animation: drop-flip 1s ease-out both;
+}
+@keyframes drop-flip {
+  0% { transform: perspective(600px) rotateY(180deg) scale(0.5); opacity: 0; filter: brightness(0.5); }
+  100% { transform: perspective(600px) rotateY(0deg) scale(1); opacity: 1; filter: brightness(1); }
+}
+
+.anim-epic {
+  animation: drop-epic 1.5s cubic-bezier(.36,.07,.19,.97) both;
+}
+@keyframes drop-epic {
+  0% { transform: translateY(-300px) scale(1.5); opacity: 0; }
+  40% { transform: translateY(0) scale(1); opacity: 1; }
+  50% { transform: translateY(-20px); }
+  60% { transform: translateY(0); }
+  70% { transform: rotate(-5deg); }
+  80% { transform: rotate(5deg); }
+  90% { transform: rotate(-3deg); }
+  100% { transform: rotate(0); }
+}
+
+.anim-flash {
+  animation: drop-flash 1.2s ease-out both;
+}
+@keyframes drop-flash {
+  0% { transform: scale(0); filter: brightness(500%); opacity: 0; }
+  40% { transform: scale(1.2); filter: brightness(300%); opacity: 1; }
+  100% { transform: scale(1); filter: brightness(100%); opacity: 1; }
+}

@@ -89,12 +89,25 @@ export default function ShopView({ profile, packs, cardsCatalog, cardStats, rari
           {pulledCards.map((card, index) => {
             const style = getCardStyle(card.rarity, rarities);
             const effectClass = card.effect ? `effect-${card.effect}` : '';
+            
+            // ЛОГІКА АНІМАЦІЙ: Спочатку кастомна, потім за рідкістю, потім стандартна
+            let animClass = "animate-in zoom-in slide-in-from-bottom-6";
+            if (card.dropAnim) {
+                animClass = `anim-${card.dropAnim}`;
+            } else if (card.rarity === "Унікальна") {
+                animClass = "anim-epic";
+            } else if (card.rarity === "Легендарна") {
+                animClass = "anim-flash";
+            } else if (card.rarity === "Епічна") {
+                animClass = "anim-flip";
+            }
+
             return (
               <div 
                 key={index} 
                 onClick={() => setViewingCard({ card, amount: 1 })}
-                className="flex flex-col items-center animate-in zoom-in slide-in-from-bottom-6 cursor-pointer group" 
-                style={{ animationDelay: `${Math.min(index * 50, 2000)}ms`, fillMode: 'both' }}
+                className={`flex flex-col items-center cursor-pointer group ${animClass}`} 
+                style={{ animationDelay: `${Math.min(index * 50, 2000)}ms`, animationFillMode: 'both' }}
               >
                 <div className={`w-32 sm:w-40 md:w-56 aspect-[2/3] rounded-2xl border-4 overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.6)] transform transition-all group-hover:scale-105 group-hover:rotate-2 ${style.border} bg-neutral-900 relative mb-4 ${effectClass}`}>
                   <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
