@@ -205,18 +205,8 @@ export default function FarmView({ profile, db, appId, cardsCatalog, showToast, 
 
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 
-        // ⏱️ 1. ОТРИМУЄМО РЕАЛЬНИЙ ЧАС ІЗ НЕЗАЛЕЖНОГО СЕРВЕРА
-        let trueNow = new Date();
-        try {
-            // Замість купи коду з fetch, просто пишемо:
-            const trueNow = await getGlobalTime();
-            if (timeRes.ok) {
-                const timeData = await timeRes.json();
-                trueNow = new Date(timeData.utc_datetime);
-            }
-        } catch (e) { 
-            console.warn("Не вдалося отримати час сервера, використовуємо локальний"); 
-        }
+// ⏱️ 1. ОТРИМУЄМО РЕАЛЬНИЙ ЧАС ІЗ НЕЗАЛЕЖНОГО СЕРВЕРА
+        let trueNow = await getGlobalTime();
 
         try {
             await runTransaction(db, async (t) => {
